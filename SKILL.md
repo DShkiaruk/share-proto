@@ -1,6 +1,6 @@
 ---
 name: share-proto
-description: Publish an HTML prototype to Vercel behind a password, with a built-in Figma-style comment layer (pins, threads, resolve). Two passwords = two roles — designers see all comments, the client sees only client comments (enforced server-side). Use when the user wants to share a prototype for feedback, e.g. "зашар прототип", "share my prototype with comments", "опублікуй прототип з коментами", "дай клієнту лишати коменти".
+description: Publish an HTML prototype to Vercel behind a password, with a built-in comment layer (pins, threads, replies, resolve). Two passwords = two roles — designers see all comments, the client sees only client comments (enforced server-side). Use when the user wants to share a prototype for feedback, e.g. "share my prototype", "add comments to my prototype", "build share-proto for my prototype", "let the client leave comments".
 ---
 
 # Share a prototype with comments
@@ -106,15 +106,15 @@ vercel project ls   # the production domain is in this output
 
 ### 7. Hand over — REQUIRED output format
 
-End your final message with this standout block (in the user's language). The link and both passwords are MANDATORY and must be visually prominent — never bury them in prose:
+End your final message with this standout block (translated to the user's language). The link and both passwords are MANDATORY and must be visually prominent — never bury them in prose:
 
-> ## 🔗 Посилання для шарингу
+> ## 🔗 Share link
 > **https://<real-domain>**
 >
-> 🔑 **Пароль дизайнерів:** `<team password>`
-> 🔑 **Пароль клієнта:** `<client password>`
+> 🔑 **Team password:** `<team password>`
+> 🔑 **Client password:** `<client password>`
 >
-> На вході кожен вводить своє ім'я — усі коменти підписані.
+> Everyone signs in with their name — all comments are attributed.
 
 Then briefly, in prose:
 

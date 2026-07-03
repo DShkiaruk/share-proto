@@ -1,53 +1,49 @@
-# share-proto — коменти на прототипах, як у Figma
+# share-proto
 
-Публікує HTML-прототип на Vercel за паролем і додає поверх нього шар коментування: піни, треди, реплаї, resolve, непрочитані, «Go to comment» з автонавігацією, темна тема, мобільний. Дві ролі: **дизайнери бачать усі коменти, клієнт — лише клієнтські** (перевіряється на сервері). Кожен входить зі своїм ім'ям — видно, хто коментить.
+Ship any HTML prototype as a password-protected link with a built-in commenting layer: pins on the exact spot, threads, replies, resolve, unread dots, one-click "Go to comment" navigation, dark-theme auto-matching, mobile support.
 
-## Як користуватись (для дизайнера)
+Two roles, one link: **designers see every comment, the client sees only client comments** — enforced on the server, not hidden in the UI. Everyone signs in with their name, so every comment is attributed.
 
-Встав посилання на цей репозиторій у Claude Code і напиши одне повідомлення:
+## How to use
 
-```
-https://github.com/DShkiaruk/share-proto — зашар мій прототип ~/Downloads/my-proto.html
-```
-
-…або, якщо прототип уже задеплоєний:
+Paste this into Claude Code:
 
 ```
-https://github.com/DShkiaruk/share-proto — додай коменти на https://my-proto.vercel.app
+Read https://github.com/DShkiaruk/share-proto and build it for my prototype
 ```
 
-Claude сам поставить усе, що бракує (Vercel CLI, сховище), проведе через реєстрацію Vercel, якщо акаунта нема, і в кінці дасть **посилання і два паролі** — одне шли команді, інше клієнту.
+Then tell it where the prototype is — a local HTML file or a URL if it's already online. Claude installs whatever is missing (Vercel CLI, storage), walks you through a free Vercel signup if you don't have one, and finishes with **the share link and two passwords** — one for your team, one for the client.
 
-Разові вимоги: Claude Code + безкоштовний акаунт [vercel.com](https://vercel.com) (агент відкриє реєстрацію сам, ~2 хв).
+One-time requirements: Claude Code and a free [vercel.com](https://vercel.com) account (the agent opens signup for you, ~2 min).
 
-## Для Claude Code (інструкція агенту)
+## For Claude Code (agent instructions)
 
-Якщо користувач дав посилання на цей репозиторій і просить зашарити/опублікувати прототип чи додати коментування:
+When a user shares this repository link and asks to build/share/publish a prototype or add commenting to one:
 
-1. Склонуй репозиторій, якщо його ще нема локально:
+1. Clone the repository if it's not present locally:
    `git clone https://github.com/DShkiaruk/share-proto ~/.claude/skills/share-proto`
-   (якщо тека існує — онови: `git -C ~/.claude/skills/share-proto pull`)
-2. Прочитай `SKILL.md` у корені репозиторію і виконай його крок за кроком. Він покриває три кейси: локальний HTML-файл, URL уже задеплоєного прототипу, і проєкт, що вже злінкований з Vercel.
-3. **Обов'язковий вивід** — фінальне повідомлення мусить закінчуватись помітним блоком з посиланням і обома паролями (формат у кроці 7 SKILL.md). Ніколи не ховай їх у тексті.
+   (if the folder exists, update it: `git -C ~/.claude/skills/share-proto pull`)
+2. Read `SKILL.md` at the repo root and follow it step by step. It covers three cases: a local HTML file, a URL of an already-deployed prototype, and a project already linked to Vercel.
+3. **Mandatory output**: your final message must end with the prominent block from SKILL.md step 7 — the share link and both passwords. Never bury them in prose.
 
-## Що всередині
+## What's inside
 
 ```
-SKILL.md              — покроковий ранбук для агента (він же Claude Code skill)
-scripts/assemble.py   — детермінована збірка проєкту з шаблону
-template/             — готова система: auth middleware, comments API, overlay UI
+SKILL.md              — the step-by-step runbook (also works as a Claude Code skill)
+scripts/assemble.py   — deterministic project assembly from the template
+template/             — the complete system: auth middleware, comments API, overlay UI
 ```
 
-Шаблон самодостатній: append-only сховище коментів на Vercel Blob (стійке до CDN-кешу), якорі пінів по елементах, спільний граф навігації для «Go to comment», автопідлаштування під темні прототипи. Не переписуй його частини — у них зашиті невідтворювані з коду уроки (див. «Hard rules» у SKILL.md).
+The template is self-contained: append-only comment storage on Vercel Blob (immune to CDN caching), element-anchored pins, a shared navigation graph that powers "Go to comment", automatic dark-theme matching. Don't rewrite its internals — they encode lessons that aren't reproducible from the code alone (see "Hard rules" in SKILL.md).
 
-## Як лишають коменти
+## How reviewers leave comments
 
-На вході — ім'я + пароль (пароль визначає роль). **C** або кнопка Comment → клік у будь-яке місце → текст → Enter. Сайдбар Threads: усі треди, непрочитане з синьою крапкою, «Go to comment» сам довозить до потрібного екрана. **H** ховає тулбар. Редагування своїх повідомлень, лінк на конкретний комент, бейдж «Older version» після оновлення прототипу.
+Sign in with a name + password (the password decides the role). Press **C** or hit Comment → click anywhere → type → Enter. The Threads sidebar lists everything: unread threads carry a blue dot, "Go to comment" navigates the prototype to the right screen by itself. **H** hides the toolbar. Reviewers can edit their own messages, copy a direct link to any comment, and comments left on an outdated build get an "Older version" badge.
 
-## Обмеження
+## Limitations
 
-- Прототип має бути самодостатнім HTML (один файл; шрифти/бібліотеки по CDN — ок).
-- Vercel Hobby формально не для комерційних проєктів (Pro — $20/міс за потреби).
-- Стан «прочитано» — пер-браузер; сповіщень поза сторінкою немає (свідомо).
+- The prototype must be a self-contained HTML file (fonts/libraries from CDNs are fine).
+- Vercel's free Hobby plan is formally for non-commercial use (Pro is $20/mo if needed).
+- Read state is per browser; there are no notifications outside the page (deliberate).
 
 MIT © Eleken

@@ -1,4 +1,4 @@
-/* FilePig comment overlay — Figma-style pins, threads, role-based visibility.
+/* proto-share comment overlay — pins, threads, role-based visibility.
    Runs in a shadow root so prototype styles and overlay styles never collide. */
 (() => {
   'use strict';
@@ -89,7 +89,7 @@
     return a;
   }
 
-  /* ---------- unread state (per browser, like Figma's blue dots) ---------- */
+  /* ---------- unread state (per browser, shown as blue dots) ---------- */
 
   function readMap() {
     try {
@@ -820,7 +820,7 @@
     else placePopover(innerWidth - 680, 80);
     msgs.scrollTop = msgs.scrollHeight;
 
-    // Opening a thread reads it — clear the blue dots (Figma behavior).
+    // Opening a thread marks it read — clear the blue dots.
     if (isUnread(t)) {
       markRead([t]);
       renderToolbar();
@@ -1096,7 +1096,7 @@
     const addRows = (items, label) => {
       if (!items.length) return;
       list.appendChild(el('div', 'sb-group', label));
-      // Figma-style ordering: unread first, then most recent activity.
+      // Ordering: unread first, then most recent activity.
       items = items
         .slice()
         .sort((a, b) => isUnread(b) - isUnread(a) || lastAt(b) - lastAt(a));
