@@ -46,4 +46,4 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - Vercel's free Hobby plan is formally for non-commercial use (Pro is $20/mo if needed).
 - Read state is per browser; there are no notifications outside the page (deliberate).
 
-MIT © Eleken
+MIT
