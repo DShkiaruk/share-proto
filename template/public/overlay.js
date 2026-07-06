@@ -1276,6 +1276,30 @@
     if (document.visibilityState === 'visible') refresh();
   }, POLL_MS);
 
+  // Long-lived tabs are the #1 source of "it doesn't work" reports: they keep
+  // running an outdated overlay. Compare our asset's ETag every 30 min and
+  // nudge for a refresh when a new version ships.
+  let overlayEtag = null;
+  let staleNotified = false;
+  async function checkOverlayVersion() {
+    try {
+      const r = await fetch('/overlay.js', { method: 'HEAD', cache: 'no-store' });
+      const tag = r.headers.get('etag');
+      if (!tag) return;
+      if (overlayEtag === null) overlayEtag = tag;
+      else if (tag !== overlayEtag && !staleNotified) {
+        staleNotified = true;
+        toast('Commenting got an update — refresh the page to use it', 8000);
+      }
+    } catch {
+      /* offline — ignore */
+    }
+  }
+  checkOverlayVersion();
+  setInterval(() => {
+    if (document.visibilityState === 'visible') checkOverlayVersion();
+  }, 30 * 60 * 1000);
+
   /* ---------- boot ---------- */
 
   function renderAll() {
