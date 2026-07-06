@@ -876,7 +876,9 @@
       const s = (target.textContent || '').replace(/\s+/g, ' ').trim();
       lastNavClick = {
         at: Date.now(),
-        from: state.screen,
+        // Compute the label NOW: state.screen is debounce-stale during fast
+        // clicking, and a wrong `from` poisons the graph with dead edges.
+        from: screenLabel(),
         anchor: {
           path: buildPath(target),
           t: target.tagName.toLowerCase(),
@@ -907,10 +909,11 @@
     }
   }
 
-  function findRoute(from, to) {
+  function findRoute(from, to, banned) {
     const m = { ...state.nav, ...navMap() };
     const adj = {};
     for (const key of Object.keys(m)) {
+      if (banned && banned.has(key)) continue;
       const [a, b] = key.split('>');
       (adj[a] ||= []).push({ to: b, anchor: m[key] });
     }
@@ -956,7 +959,21 @@
 
   async function autoNavigate(t) {
     if (navigating) return;
-    const route = findRoute(screenLabel(), t.screenLabel);
+    // Mis-attributed edges happen (fast clicking, stale labels): before
+    // trusting a route, its FIRST hop must actually be clickable from here —
+    // otherwise ban that edge and look for another path.
+    const banned = new Set();
+    let route = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const from = screenLabel();
+      const candidate = findRoute(from, t.screenLabel, banned);
+      if (!candidate) break;
+      if (!candidate.length || locateAnchor(candidate[0].anchor).el) {
+        route = candidate;
+        break;
+      }
+      banned.add(`${from}>${candidate[0].to}`);
+    }
     if (!route) {
       // No path from HERE — but prototypes reset to the start screen on
       // reload, so if a path exists from the start, teleport via reload and
