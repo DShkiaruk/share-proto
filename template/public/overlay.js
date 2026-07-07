@@ -305,8 +305,16 @@
 
   const resolveAnchor = (anchor) => locateAnchor(anchor).pos;
 
+  // Older builds used a single-heading label; newer ones join two ("A · B").
+  // A legacy label equals the first part of its composite successor.
+  function labelsMatch(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return a.split(' · ')[0] === b || b.split(' · ')[0] === a;
+  }
+
   // A comment lives on the PAGE it was left on.
-  const onThisScreen = (t) => !t.screenLabel || t.screenLabel === state.screen;
+  const onThisScreen = (t) => !t.screenLabel || labelsMatch(t.screenLabel, state.screen);
 
   /* ---------- api ---------- */
 
@@ -846,8 +854,14 @@
     }
   }
 
+  // Mid-transition screens can have no visible headings — screenLabel falls
+  // back to document.title then. Such labels are phantom nodes: never learn
+  // edges through them.
+  const isFallbackLabel = (l) => l === (document.title || 'Screen');
+
   function saveEdge(from, to, anchor) {
     if (!from || !to || from === to || !anchor) return;
+    if (isFallbackLabel(from) || isFallbackLabel(to)) return;
     const key = `${from}>${to}`;
     const m = navMap();
     const isNew = !m[key] && !state.nav[key];
@@ -910,7 +924,9 @@
   }
 
   function findRoute(from, to, banned) {
-    const m = { ...state.nav, ...navMap() };
+    // Server graph wins on key collisions: it's collective and freshest,
+    // while a browser's local graph may hold anchors from buggy old builds.
+    const m = { ...navMap(), ...state.nav };
     const adj = {};
     for (const key of Object.keys(m)) {
       if (banned && banned.has(key)) continue;
@@ -943,7 +959,7 @@
     return new Promise((resolve) => {
       const t0 = Date.now();
       const iv = setInterval(() => {
-        if (screenLabel() === fp) {
+        if (labelsMatch(screenLabel(), fp)) {
           clearInterval(iv);
           resolve(true);
         } else if (Date.now() - t0 > timeout) {
@@ -957,49 +973,69 @@
   let navigating = false;
   let bootScreen = null; // the screen the prototype always starts on
 
+  // A thread's stored label may predate the current label algorithm — map it
+  // onto an existing graph node when an equivalent one exists.
+  function graphTarget(label) {
+    const m = { ...navMap(), ...state.nav };
+    const nodes = new Set();
+    for (const k of Object.keys(m)) {
+      const [a, b] = k.split('>');
+      nodes.add(a);
+      nodes.add(b);
+    }
+    if (nodes.has(label)) return label;
+    for (const n of nodes) if (labelsMatch(n, label)) return n;
+    return label;
+  }
+
+  // Drive the prototype hop by hop, re-planning after every step: bad edges
+  // happen (recorded on old builds, mis-attributed clicks) and a single one
+  // must not kill the trip — ban it and route around from wherever we are.
   async function autoNavigate(t) {
     if (navigating) return;
-    // Mis-attributed edges happen (fast clicking, stale labels): before
-    // trusting a route, its FIRST hop must actually be clickable from here —
-    // otherwise ban that edge and look for another path.
-    const banned = new Set();
-    let route = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const from = screenLabel();
-      const candidate = findRoute(from, t.screenLabel, banned);
-      if (!candidate) break;
-      if (!candidate.length || locateAnchor(candidate[0].anchor).el) {
-        route = candidate;
-        break;
-      }
-      banned.add(`${from}>${candidate[0].to}`);
-    }
-    if (!route) {
-      // No path from HERE — but prototypes reset to the start screen on
-      // reload, so if a path exists from the start, teleport via reload and
-      // replay from there.
-      if (bootScreen && bootScreen !== screenLabel() && findRoute(bootScreen, t.screenLabel)) {
-        localStorage.setItem('fp_jump', t.id);
-        toastSticky('Taking you to the comment…');
-        location.reload();
-        return;
-      }
-      return armGuided(t);
-    }
     navigating = true;
     toastSticky('Taking you to the comment…');
+    const target = graphTarget(t.screenLabel);
+    const banned = new Set();
     try {
-      for (const step of route) {
+      for (let hop = 0; hop < 12; hop++) {
+        const from = screenLabel();
+        if (labelsMatch(from, t.screenLabel) || labelsMatch(from, target)) break;
+        const route = findRoute(from, target, banned);
+        if (!route || !route.length) {
+          // No path from here — prototypes reset to the start screen on
+          // reload, so teleport via reload when a path exists from the start.
+          if (bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
+            localStorage.setItem('fp_jump', t.id);
+            location.reload();
+            return;
+          }
+          clearSticky();
+          armGuided(t);
+          return;
+        }
+        const step = route[0];
         const loc = locateAnchor(step.anchor);
-        if (!loc.el) throw new Error('edge lost');
+        if (!loc.el) {
+          banned.add(`${from}>${step.to}`);
+          continue;
+        }
         loc.el.click();
-        if (!(await waitForScreen(step.to, 3500))) throw new Error('screen never showed');
+        if (!(await waitForScreen(step.to, 5000))) {
+          banned.add(`${from}>${step.to}`);
+          // fall through: next iteration re-plans from the actual screen
+        }
       }
-      clearSticky();
       state.screen = screenLabel();
-      state.screenLabel = screenLabel();
-      renderPins();
-      jumpToThread(state.threads.find((x) => x.id === t.id) || t);
+      state.screenLabel = state.screen;
+      if (labelsMatch(state.screen, t.screenLabel) || labelsMatch(state.screen, target)) {
+        clearSticky();
+        renderPins();
+        jumpToThread(state.threads.find((x) => x.id === t.id) || t);
+      } else {
+        clearSticky();
+        armGuided(t);
+      }
     } catch {
       clearSticky();
       armGuided(t);
