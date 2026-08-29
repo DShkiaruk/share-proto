@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/unit/",
+    "test": "node --test tests/unit/*.test.mjs",
     "e2e": "playwright test -c tests/e2e/playwright.config.mjs",
     "smoke": "bash scripts/smoke.sh"
   },
