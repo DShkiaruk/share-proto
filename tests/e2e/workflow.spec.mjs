@@ -93,7 +93,11 @@ test('kind chips at creation; status filter; versions registered and labeled', a
 
 test('what’s new: a client comment since the last visit shows a New badge for the designer', async ({ page, browser }) => {
   await login(page, 'Designer', TEAM);
-  await page.evaluate(() => localStorage.setItem('fp_last_visit', String(Date.now() - 60_000)));
+  // Simulate a previous visit a minute ago and a *new* browser session (the digest is session-scoped).
+  await page.evaluate(() => {
+    localStorage.setItem('fp_last_visit', String(Date.now() - 60_000));
+    sessionStorage.removeItem('fp_session');
+  });
   const client = await browser.newPage();
   await login(client, 'Client', CLIENT);
   await mouseClick(client, inOverlay(client, '.tb-btn').first());

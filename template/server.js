@@ -138,7 +138,7 @@ async function putFileLocal(room, rel, buf) {
 async function storeImagesLocal(room, tid, kind, images, now) {
   const paths = [];
   for (const [i, img] of parseImages(images).entries()) {
-    const rel = `${kind}/${tid}/${String(now).padStart(14, '0')}-${i}.${img.ext}`;
+    const rel = `${kind}/${tid}/${String(now).padStart(14, '0')}-${i}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     paths.push(rel);
   }
@@ -156,13 +156,15 @@ function json(res, status, payload) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, res) {
   return new Promise((resolve) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
       if (size > 4 * 1024 * 1024) { // three 1.5 MB images as base64
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload too large' }));
         req.destroy();
         resolve(null);
         return;
@@ -193,7 +195,7 @@ function setSessionCookie(req, res, token, maxAge) {
 
 async function apiLogin(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
-  const body = (await readBody(req)) || {};
+  const body = (await readBody(req, res)) || {};
   const cleanName = clean(body.name, MAX_NAME);
   if (!cleanName) return json(res, 400, { error: 'Missing name' });
   const password = body.password;
@@ -246,10 +248,13 @@ async function apiComments(req, res, session) {
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
 
-  const body = (await readBody(req)) || {};
+  const body = (await readBody(req, res)) || {};
   const action = body.action;
   const now = Date.now();
   const room = roomFromReq(req);
+  if (Array.isArray(body.images) && (body.images.length > 3 || body.images.some((x) => !parseImageDataUrl(x)))) {
+    return json(res, 400, { error: 'Bad image' });
+  }
 
   if (action === 'edge') {
     const from = clean(body.from, 64);
@@ -280,7 +285,7 @@ async function apiComments(req, res, session) {
       screen: clean(body.screen, 64),
       screenLabel: clean(body.screenLabel, 120),
       anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
-      proto: clean(body.proto, 64) || null,
+      proto: clean(body.proto, 80) || null,
       page: sanitizePage(body.page),
       n: Math.max(nextNumber(S.threads), (S.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
@@ -304,7 +309,10 @@ async function apiComments(req, res, session) {
     if (!/^[A-Za-z0-9"/_.:-]{1,80}$/.test(id)) return json(res, 400, { error: 'Bad version id' });
     if (action === 'version-label' && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
     S.versions ||= [];
-    if (action === 'version' && S.versions.some((v) => v.id === id)) return json(res, 200, { ok: true, known: true });
+    const known = S.versions.some((v) => v.id === id);
+    if (action === 'version' && known) return json(res, 200, { ok: true, known: true });
+    if (action === 'version-label' && !known) return json(res, 404, { error: 'Unknown version' });
+    if (action === 'version' && S.versions.length >= 100) return json(res, 400, { error: 'Too many versions' });
     S.versions = applyVersionEvent(S.versions, action === 'version' ? { id, at: now } : { id, label: clean(body.label, 60), at: now });
     await persist();
     return json(res, 200, { ok: true, versions: S.versions });
@@ -352,6 +360,9 @@ async function apiComments(req, res, session) {
     if ((status === 'progress' || status === 'wont') && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
     const note = clean(body.note, 200);
     if (status === 'wont' && !note) return json(res, 400, { error: 'Reason required' });
+    if ((thread.status || (thread.resolved ? 'done' : 'open')) === status && (thread.statusNote || null) === (status === 'wont' ? note : null)) {
+      return json(res, 200, { thread });
+    }
     S.threads = applyStatus(S.threads, tid, { status, note, author, at: now });
   } else if (action === 'kind') {
     if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
@@ -365,6 +376,9 @@ async function apiComments(req, res, session) {
     const own = thread.authorRole === role && thread.author === author;
     if (role !== 'designer' && !own) return json(res, 403, { error: 'Not allowed' });
     S.threads = S.threads.filter((t) => t.id !== tid);
+    for (const kind of ['previews', 'attach']) {
+      await fsp.rm(path.join(FILES, room ? `rooms/${room}/` : '', kind, tid), { recursive: true, force: true }).catch(() => {});
+    }
     await persist();
     return json(res, 200, { ok: true });
   } else {
@@ -470,8 +484,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/file') {
       const u = new URL(req.url, 'http://local');
-      const token = u.searchParams.get('token');
-      const s2 = session || (await sessionFromHeaders('', token ? `Bearer ${token}` : '', SECRETS.sessionSecret));
+      const s2 = session;
       if (!s2) return json(res, 401, { error: 'Not authenticated' });
       const rel = String(u.searchParams.get('p') || '');
       if (!SAFE_FILE.test(rel)) return json(res, 400, { error: 'Bad path' });

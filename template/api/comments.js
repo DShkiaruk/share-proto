@@ -72,10 +72,16 @@ export default async function handler(req, res) {
   if (Array.isArray(body.images) && JSON.stringify(body.images).length > 3.2e6) {
     return res.status(413).json({ error: 'Images too large' });
   }
+  // Every supplied image must parse — a silently dropped attachment is worse
+  // than a refused post.
+  if (Array.isArray(body.images) && body.images.some((s) => !parseImageDataUrl(s))) {
+    return res.status(400).json({ error: 'Bad image' });
+  }
+  if (Array.isArray(body.images) && body.images.length > 3) return res.status(400).json({ error: 'Too many images' });
   async function storeImages(tid, kind, images) {
     const paths = [];
     for (const [i, img] of parseImages(images).entries()) {
-      const rel = `${kind}/${tid}/${ts(now)}-${i}.${img.ext}`;
+      const rel = `${kind}/${tid}/${ts(now)}-${i}-${uuid().slice(0, 8)}.${img.ext}`;
       await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
       paths.push(rel);
     }
@@ -109,7 +115,7 @@ export default async function handler(req, res) {
       screen: clean(body.screen, 64),
       screenLabel: clean(body.screenLabel, 120),
       anchor,
-      proto: clean(body.proto, 64) || null,
+      proto: clean(body.proto, 80) || null,
       page: sanitizePage(body.page),
       // Never reuse a number: max over live threads AND the document's high-water mark.
       n: Math.max(nextNumber(before.threads), (before.maxN || 0) + 1),
@@ -144,9 +150,10 @@ export default async function handler(req, res) {
     if (action === 'version-label' && role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
     const ev = action === 'version' ? { id, at: now } : { id, label: clean(body.label, 60), at: now };
     const { state: cur } = await store.loadState(root);
-    if (action === 'version' && (cur.versions || []).some((v) => v.id === id)) {
-      return res.status(200).json({ ok: true, known: true });
-    }
+    const known = (cur.versions || []).some((v) => v.id === id);
+    if (action === 'version' && known) return res.status(200).json({ ok: true, known: true });
+    if (action === 'version-label' && !known) return res.status(404).json({ error: 'Unknown version' });
+    if (action === 'version' && (cur.versions || []).length >= 100) return res.status(400).json({ error: 'Too many versions' });
     await storage.appendEvent(`${root}versions/${ts(now)}-${uuid()}.json`, ev);
     const { state, path } = await store.mutate(root, (s) => ({ versions: applyVersionEvent(s.versions, ev) }));
     res.setHeader('X-Store-Path', path);
@@ -203,6 +210,9 @@ export default async function handler(req, res) {
     }
     const note = clean(body.note, 200);
     if (status === 'wont' && !note) return res.status(400).json({ error: 'Reason required' });
+    if ((existing.status || (existing.resolved ? 'done' : 'open')) === status && (existing.statusNote || null) === (status === 'wont' ? note : null)) {
+      return res.status(200).json({ thread: existing }); // no-op: no duplicate system line
+    }
     await storage.appendEvent(eventPath(tid), {
       type: 'state', at: now, status, ...(status === 'wont' ? { note } : {}), author, role,
     });
@@ -229,6 +239,11 @@ export default async function handler(req, res) {
     await storage.appendEvent(eventPath(tid), { type: 'tomb', at: now });
     const old = await storage.listAll(`${root}threads/${tid}/`);
     await storage.delAll(old.filter((b) => !b.pathname.includes(ts(now))).map((b) => b.pathname));
+    // Media belongs to the thread: purge previews and attachments with it.
+    for (const kind of ['previews', 'attach']) {
+      const media = await storage.listAll(`${root}${kind}/${tid}/`);
+      await storage.delAll(media.map((b) => b.pathname));
+    }
     patch = (s) => ({ threads: applyDelete(s.threads, tid) });
   } else {
     return res.status(400).json({ error: 'Unknown action' });

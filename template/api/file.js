@@ -1,6 +1,9 @@
 import { Readable, pipeline } from 'node:stream';
-import { getFile, readJson } from '../lib/storage.js';
+import * as storage from '../lib/storage.js';
+import { createStateStore } from '../lib/state.js';
 import { canSee } from '../lib/threads.js';
+
+const store = createStateStore(storage);
 import { sessionFromHeaders } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
@@ -17,12 +20,11 @@ export default async function handler(req, res) {
   if (applyCors(req, res, process.env.ALLOWED_ORIGINS)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const url = new URL(req.url, 'http://x');
-  // Embed mode: <img> tags cannot send an Authorization header, so the overlay
-  // appends the session token as ?token= (same signed token, same checks).
-  const token = url.searchParams.get('token');
+  // Embed mode fetches media with an Authorization header and shows blob: URLs —
+  // the session token never appears in an image URL.
   const session = await sessionFromHeaders(
     req.headers.cookie || '',
-    req.headers.authorization || (token ? `Bearer ${token}` : ''),
+    req.headers.authorization || '',
     process.env.SESSION_SECRET
   );
   if (!session) return res.status(401).json({ error: 'Not authenticated' });
@@ -34,12 +36,12 @@ export default async function handler(req, res) {
 
   const [kind, key] = rel.split('/');
   if (kind !== 'shots') {
-    const { data: state } = await readJson(`${root}state.json`);
-    const thread = state?.threads?.find((t) => t.id === key);
+    const { state } = await store.loadState(root);
+    const thread = state.threads.find((t) => t.id === key);
     if (!thread || !canSee(session.r, thread)) return res.status(404).json({ error: 'Not found' });
   }
 
-  const file = await getFile(`${root}${rel}`);
+  const file = await storage.getFile(`${root}${rel}`);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.setHeader('Content-Type', file.contentType);
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');

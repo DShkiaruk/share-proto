@@ -5,6 +5,21 @@ const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
 test.describe.configure({ mode: 'serial' });
 
+// Width/height from the first SOFn marker of a baseline/progressive JPEG.
+function jpegSize(buf) {
+  let i = 2;
+  while (i < buf.length) {
+    if (buf[i] !== 0xff) return null;
+    const marker = buf[i + 1];
+    const len = buf.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
 test('a posted comment gets a viewport preview; the client cannot fetch a designer preview', async ({ page, browser }) => {
   await login(page, 'Designer', TEAM);
   await mouseClick(page, inOverlay(page, '.tb-btn').first());
@@ -21,7 +36,10 @@ test('a posted comment gets a viewport preview; the client cannot fetch a design
   const r = await page.request.get(`/api/file?p=${encodeURIComponent(t.preview)}`);
   expect(r.status()).toBe(200);
   expect(r.headers()['content-type']).toBe('image/jpeg');
-  expect((await r.body()).length).toBeGreaterThan(1000);
+  const body = await r.body();
+  expect(body.length).toBeGreaterThan(1000);
+  // It is a *viewport* capture: 1280×800 scaled to ≤ 960 px wide → 960×600 (JPEG SOF0 frame header).
+  expect(jpegSize(body)).toEqual({ w: 960, h: 600 });
   const client = await browser.newPage();
   await login(client, 'Client', CLIENT);
   expect((await client.request.get(`/api/file?p=${encodeURIComponent(t.preview)}`)).status()).toBe(404);

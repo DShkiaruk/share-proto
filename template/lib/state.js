@@ -20,6 +20,9 @@ export function applyVersionEvent(versions, ev) {
   if (!v) {
     v = { id: ev.id, firstSeen: ev.at, label: null };
     list.push(v);
+  } else if (ev.at < v.firstSeen) {
+    list[list.indexOf(v)] = { ...v, firstSeen: ev.at };
+    v = list.find((x) => x.id === ev.id);
   }
   if (typeof ev.label === 'string') list[list.indexOf(v)] = { ...v, label: ev.label.slice(0, 60) || null };
   return list.sort((a, b) => a.firstSeen - b.firstSeen);
@@ -40,11 +43,16 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
       storage.readEvents(`${root}nav/`),
       storage.readEvents(`${root}versions/`),
     ]);
+    const threads = assemble(threadEvents, root);
     let versions = [];
+    // Builds referenced by threads (incl. pre-Phase-3 `v<hash>` ids) are versions
+    // too — first seen when their earliest comment was left.
+    for (const t of threads) {
+      if (t.proto) versions = applyVersionEvent(versions, { id: t.proto, at: t.createdAt });
+    }
     for (const { data: e } of versionEvents.filter((b) => b.data).sort((a, b) => a.data.at - b.data.at)) {
       versions = applyVersionEvent(versions, e);
     }
-    const threads = assemble(threadEvents, root);
     const edges = navEvents
       .map((b) => b.data)
       .filter((e) => e && e.from && e.to)

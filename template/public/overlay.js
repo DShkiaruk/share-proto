@@ -101,6 +101,7 @@
     confirmDelete: null,
     presenting: false, // H: everything hidden, a dot remains
     sort: localStorage.getItem('fp_sort') || 'newest',
+    filter: 'active', // active = open + in progress (what needs attention)
     roleFilter: 'all', // designer-only: all | client | team
     versions: [],
     navAt: {},
@@ -121,6 +122,7 @@
   const KIND_ICON = { bug: 'bug', question: 'help', idea: 'lightbulb' };
   const EMOJI = ['👍', '✅', '❓', '👀'];
   const statusOf = (t) => t.status || (t.resolved ? 'done' : 'open');
+  const isResolvedStatus = (s) => s === 'done' || s === 'wont';
   function kindIcon(t) {
     if (!t.kind || !KIND_ICON[t.kind]) return null;
     const k = el('span', `kind-ico k-${t.kind}`);
@@ -678,11 +680,23 @@
 
   /* ---------- media ---------- */
 
-  const fileUrl = (rel) =>
-    apiUrl('/api/file') +
-    (ROOM ? '&' : '?') +
-    `p=${encodeURIComponent(rel)}` +
-    (EMBED && authToken ? `&token=${encodeURIComponent(authToken)}` : '');
+  const fileUrl = (rel) => apiUrl('/api/file') + (ROOM ? '&' : '?') + `p=${encodeURIComponent(rel)}`;
+  // Same-origin installs load media by URL (cookie auth). Embed mode cannot
+  // put a cookie or a header on an <img>, so it fetches with the bearer token
+  // and shows a blob: URL — the session token never lands in a URL.
+  const blobCache = new Map();
+  async function mediaSrc(rel) {
+    if (!EMBED) return fileUrl(rel);
+    if (blobCache.has(rel)) return blobCache.get(rel);
+    const r = await fetch(fileUrl(rel), { headers: authHeaders() });
+    if (!r.ok) throw new Error(`file ${r.status}`);
+    const u = URL.createObjectURL(await r.blob());
+    blobCache.set(rel, u);
+    return u;
+  }
+  function setImg(im, rel) {
+    mediaSrc(rel).then((src) => (im.src = src)).catch(() => im.remove());
+  }
 
   let shotLib = null;
   function loadScreenshotLib() {
@@ -701,8 +715,11 @@
   // Rasterize the current viewport with the pin marked, downscale, and attach it
   // to the thread. Runs after the post succeeded; any failure is silent — a
   // comment without a picture is still a comment.
-  async function capturePreview(thread, point) {
+  async function capturePreview(thread, point, at) {
     try {
+      // The reviewer may have moved on since the post — a picture of another
+      // screen would be worse than none.
+      if (at && (at.label !== screenLabel() || at.page !== currentPage())) return;
       const lib = await loadScreenshotLib();
       if (!lib) return;
       const scale = Math.min(1, 960 / innerWidth);
@@ -711,6 +728,7 @@
           scale,
           width: innerWidth,
           height: innerHeight,
+          timeout: 4000,
           filter: (node) => node !== host,
           style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
         }),
@@ -751,7 +769,10 @@
         const c = document.createElement('canvas');
         c.width = Math.max(1, Math.round(img.naturalWidth * k));
         c.height = Math.max(1, Math.round(img.naturalHeight * k));
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; // JPEG has no alpha — transparent PNGs would turn black
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
         URL.revokeObjectURL(url);
         resolve(c.toDataURL('image/jpeg', 0.85));
       };
@@ -768,11 +789,11 @@
     lightbox?.remove();
     lightbox = null;
   }
-  function openLightbox(src) {
+  function openLightbox(rel) {
     closeLightbox();
     lightbox = el('div', 'lightbox');
     const im = el('img');
-    im.src = src;
+    setImg(im, rel);
     im.alt = '';
     lightbox.appendChild(im);
     lightbox.addEventListener('click', closeLightbox);
@@ -795,10 +816,13 @@
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
           const sig = JSON.stringify([
-            state.threads.map((t) => [t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.messages.length, t.n, JSON.stringify(t.messages.map((m) => m.reactions || 0))]),
+            state.threads.map((t) => [
+              t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.n,
+              t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
+            ]),
             state.versions.map((v) => [v.id, v.label]),
           ]);
-          if (sig !== lastSig || !lastSig) {
+          if (sig !== lastSig) {
             lastSig = sig;
             renderAll();
           }
@@ -962,7 +986,8 @@
   function threadsInView() {
     return state.threads.filter(
       (t) =>
-        (state.filter === 'all' || statusOf(t) === state.filter) &&
+        (state.filter === 'all' ||
+          (state.filter === 'active' ? !isResolvedStatus(statusOf(t)) : statusOf(t) === state.filter)) &&
         (state.roleFilter === 'all' ||
           (state.roleFilter === 'client' ? t.authorRole === 'client' : t.authorRole === 'designer')) &&
         (!state.versionFilter || t.proto === state.versionFilter)
@@ -1172,12 +1197,22 @@
       });
     };
     const addFiles = async (files) => {
-      for (const f of [...files].filter((x) => x.type.startsWith('image/'))) {
-        if (pending.length >= 3) return toast('Up to 3 images per message');
+      for (const f of [...files].filter((x) => x && x.type.startsWith('image/'))) {
+        if (pending.length >= 3) {
+          toast('Up to 3 images per message');
+          break;
+        }
         try {
           const src = await shrinkImage(f);
+          if (src.length > 2e6) {
+            toast('That image is too large (1.5 MB max)');
+            continue;
+          }
           const total = pending.reduce((n, x) => n + x.length, 0) + src.length;
-          if (total > 3e6) return toast('Images too large — try fewer or smaller');
+          if (total > 3e6) {
+            toast('Images too large — try fewer or smaller');
+            break;
+          }
           pending.push(src);
         } catch {
           toast('That file isn’t an image');
@@ -1190,7 +1225,7 @@
       input.value = '';
     });
     ta.addEventListener('paste', (e) => {
-      const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === 'file').map((it) => it.getAsFile());
+      const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
       if (files.length) {
         e.preventDefault();
         addFiles(files);
@@ -1238,11 +1273,13 @@
             images: images(),
           });
           // Picture of where this was left — after the post, never blocking it.
-          (window.requestIdleCallback || setTimeout)(() => capturePreview(thread, point));
+          const at = { label: screenLabel(), page: currentPage() };
+          if (window.requestIdleCallback) requestIdleCallback(() => capturePreview(thread, point, at), { timeout: 1500 });
+          else setTimeout(() => capturePreview(thread, point, at), 50);
           state.draft = null;
           draftPin?.remove();
           draftPin = null;
-          state.filter = 'open'; // a fresh comment is always open — make its pin visible
+          state.filter = 'active'; // a fresh comment is always open — make its pin visible
           await refresh();
           closePopover();
           const pin = pinEls.get(thread.id);
@@ -1280,10 +1317,18 @@
   }
   async function postThread(body, okToast) {
     try {
+      const draft = popover?.querySelector('.compose textarea')?.value || '';
       await api('POST', body);
       await refresh();
       const live = state.threads.find((x) => x.id === body.threadId);
-      if (live) openThread(live.id, pinEls.get(live.id));
+      if (live) {
+        openThread(live.id, pinEls.get(live.id));
+        const ta = popover?.querySelector('.compose textarea');
+        if (ta && draft) {
+          ta.value = draft; // a half-typed reply survives a status/reaction change
+          ta.dispatchEvent(new Event('input'));
+        }
+      }
       if (okToast) toast(okToast);
     } catch {
       toast('Couldn’t update — try again');
@@ -1337,6 +1382,7 @@
     ta.addEventListener('input', () => (save.disabled = !ta.value.trim()));
     ta.addEventListener('keydown', (e) => {
       e.stopPropagation();
+      if (e.key === 'Escape') return closeStatusMenu();
       if (e.key === 'Enter' && !e.shiftKey && ta.value.trim()) {
         e.preventDefault();
         save.click();
@@ -1354,11 +1400,11 @@
     ta.focus();
   }
   function sysLine(h) {
-    const who = h.author || 'Someone';
+    const who = h.author;
     const text =
       h.status === 'wont'
-        ? `${who} won’t do this${h.note ? `: ${h.note}` : ''}`
-        : `${who} marked as ${STATUS_LABEL[h.status] || h.status}`;
+        ? `${who || 'Marked as'} ${who ? 'won’t do this' : 'Won’t do'}${h.note ? `: ${h.note}` : ''}`
+        : `${who ? `${who} marked as` : 'Marked as'} ${STATUS_LABEL[h.status] || h.status}`;
     const line = el('div', 'sys-line', text);
     line.title = new Date(h.at).toLocaleString();
     return line;
@@ -1494,9 +1540,9 @@
     if (!pinEl && !onThisScreen(t)) {
       if (t.preview) {
         const pv = el('img', 'popover-preview');
-        pv.src = fileUrl(t.preview);
+        setImg(pv, t.preview);
         pv.alt = 'Where this comment is';
-        pv.addEventListener('click', () => openLightbox(fileUrl(t.preview)));
+        pv.addEventListener('click', () => openLightbox(t.preview));
         popover.appendChild(pv);
       }
       const go = el('button', 'goto-row');
@@ -1569,10 +1615,10 @@
         const imgs = el('div', 'imgs');
         for (const rel of m.img) {
           const im = el('img');
-          im.src = fileUrl(rel);
+          setImg(im, rel);
           im.loading = 'lazy';
           im.alt = 'Attachment';
-          im.addEventListener('click', () => openLightbox(fileUrl(rel)));
+          im.addEventListener('click', () => openLightbox(rel));
           imgs.appendChild(im);
         }
         box.appendChild(imgs);
@@ -1867,11 +1913,11 @@
       clearSticky();
       syncScreen(); // the mutation observer is debounced; onThisScreen() must see the new label now
     }
-    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t);
+    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t, my);
     return openAtState(t, my);
   }
 
-  async function autoNavigate(t) {
+  async function autoNavigate(t, my = trip) {
     if (navigating) return;
     // Multi-page prototypes: the thread remembers its page — navigate there
     // directly; the deep-link boot on that page finishes the jump. Click
@@ -1909,7 +1955,9 @@
           continue;
         }
         synthClick(loc.el);
-        if (!(await waitForScreen(step.to, 5000))) {
+        const arrived = await waitForScreen(step.to, 5000);
+        if (my !== trip) return; // a newer goTo took over
+        if (!arrived) {
           banned.add(`${from}>${step.to}`);
           // fall through: next iteration re-plans from the actual screen
         }
@@ -1919,7 +1967,7 @@
       if (labelsMatch(state.screen, t.screenLabel) || labelsMatch(state.screen, target)) {
         clearSticky();
         renderPins();
-        openAtState(state.threads.find((x) => x.id === t.id) || t);
+        openAtState(state.threads.find((x) => x.id === t.id) || t, my);
       } else {
         clearSticky();
         armGuided(t);
@@ -2007,11 +2055,11 @@
     hoverCard = el('div', 'preview-card');
     if (t.preview) {
       const im = el('img');
-      im.src = fileUrl(t.preview);
-      im.alt = `Screen with comment #${t.n}`;
+      setImg(im, t.preview);
+      im.alt = `Screen with comment ${numLabel(t)}`.trim();
       im.addEventListener('click', (e) => {
         e.stopPropagation();
-        openLightbox(fileUrl(t.preview));
+        openLightbox(t.preview);
       });
       hoverCard.appendChild(im);
     } else {
@@ -2023,7 +2071,12 @@
       el('div', 'text', t.messages[0]?.text || '')
     );
     hoverCard.appendChild(body);
+    // The card must be reachable: leaving the row starts a short grace timer
+    // that entering the card cancels.
+    hoverCard.addEventListener('pointerenter', () => clearTimeout(hoverTimer));
+    hoverCard.addEventListener('pointerleave', () => (hoverTimer = setTimeout(hidePreviewCard, 150)));
     root.appendChild(hoverCard);
+    if (matchMedia('(pointer: coarse)').matches) return; // CSS turns it into a bottom sheet
     const r = row.getBoundingClientRect();
     const w = 300;
     hoverCard.style.left = `${Math.max(12, r.left - w - 12)}px`;
@@ -2054,7 +2107,10 @@
           input.maxLength = 60;
           label.replaceWith(input);
           input.focus();
+          let closed = false; // Enter and the blur it causes must post once; Escape must not post
           const done = async () => {
+            if (closed) return;
+            closed = true;
             const val = input.value.trim();
             if (val === (v.label || '')) return renderSidebar();
             try {
@@ -2068,7 +2124,10 @@
           input.addEventListener('keydown', (e) => {
             e.stopPropagation();
             if (e.key === 'Enter') done();
-            if (e.key === 'Escape') renderSidebar();
+            if (e.key === 'Escape') {
+              closed = true;
+              renderSidebar();
+            }
           });
           input.addEventListener('blur', done);
         });
@@ -2131,9 +2190,10 @@
 
     const controls = el('div', 'sb-controls');
     const seg = el('div', 'seg status-seg');
-    for (const f of ['open', 'progress', 'done', 'wont', 'all']) {
-      const b = el('button', state.filter === f ? 'on' : '', f === 'all' ? 'All' : STATUS_LABEL[f]);
-      b.title = f === 'all' ? 'All statuses' : STATUS_LABEL[f];
+    const SEG = { active: 'Active', progress: 'In progress', done: 'Done', wont: 'Won’t do', all: 'All' };
+    for (const f of ['active', 'progress', 'done', 'wont', 'all']) {
+      const b = el('button', state.filter === f ? 'on' : '', SEG[f]);
+      b.title = f === 'active' ? 'Open and in progress' : f === 'all' ? 'All statuses' : STATUS_LABEL[f];
       b.addEventListener('click', () => {
         state.filter = f;
         renderSidebar();
@@ -2184,9 +2244,9 @@
     }
     const match = threadsInView();
     const fresh = match.filter(isNew);
-    if (fresh.length && withinNewWindow()) {
+    const screens = withinNewWindow() ? newScreens() : [];
+    if ((fresh.length || screens.length) && withinNewWindow()) {
       list.appendChild(el('div', 'sb-group', 'New for you'));
-      const screens = newScreens();
       if (screens.length) list.appendChild(el('div', 'sb-note', `New screens: ${screens.join(', ')}`));
     }
 
@@ -2223,14 +2283,27 @@
           clearTimeout(hoverTimer);
           hoverTimer = setTimeout(() => showPreviewCard(t, row), 350);
         });
-        row.addEventListener('pointerleave', hidePreviewCard);
-        const eye = el('button', 'eye');
+        row.addEventListener('pointerleave', () => {
+          clearTimeout(hoverTimer);
+          hoverTimer = setTimeout(hidePreviewCard, 150);
+        });
+        // Touch: an eye control (a span — buttons can't nest) toggles the card.
+        const eye = el('span', 'eye');
+        eye.setAttribute('role', 'button');
+        eye.tabIndex = 0;
         eye.append(icon('eyeSmall'));
         eye.setAttribute('aria-label', 'Preview');
-        eye.addEventListener('click', (e) => {
+        const toggleCard = (e) => {
           e.stopPropagation();
-          if (hoverCard) hidePreviewCard();
-          else showPreviewCard(t, row);
+          if (hoverCard?.dataset.for === t.id) hidePreviewCard();
+          else {
+            showPreviewCard(t, row);
+            hoverCard.dataset.for = t.id;
+          }
+        };
+        eye.addEventListener('click', toggleCard);
+        eye.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') toggleCard(e);
         });
         meta.appendChild(eye);
         list.appendChild(row);
@@ -2381,6 +2454,7 @@
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (e.key === 'Escape') {
       if (lightbox) closeLightbox();
+      else if (statusMenu) closeStatusMenu();
       else if (state.draft) cancelDraft();
       else if (popover) closePopover();
       else if (state.pendingJump) cancelJump();
@@ -2399,7 +2473,7 @@
   document.addEventListener(
     'pointerdown',
     (e) => {
-      if (hoverCard && !e.composedPath().includes(hoverCard)) hidePreviewCard();
+      if (hoverCard && !e.composedPath().some((n) => n === hoverCard || n.classList?.contains('eye'))) hidePreviewCard();
       if (statusMenu && !e.composedPath().includes(statusMenu)) closeStatusMenu();
       if (!popover && !state.draft) return;
       if (e.composedPath().includes(host)) return;
@@ -2412,6 +2486,7 @@
   /* ---------- watchers ---------- */
 
   let mutTimer = null;
+  let lastHere = '';
   function onMutate() {
     clearTimeout(mutTimer);
     mutTimer = setTimeout(() => {
@@ -2437,9 +2512,13 @@
       positionPins();
       checkPendingJump();
       // Prototypes mutate constantly (animations, timers); rebuilding the open
-      // sidebar on every mutation swallows clicks. Its grouping only depends on
-      // the screen, so re-render on a screen change alone.
-      if (state.sidebar && state.screen !== prevScreen) renderSidebar();
+      // sidebar on every mutation swallows clicks. Re-render only when its
+      // grouping input changed: the screen, or which threads are on it.
+      if (state.sidebar) {
+        const here = state.threads.filter(onThisScreen).map((t) => t.id).join(',');
+        if (state.screen !== prevScreen || here !== lastHere) renderSidebar();
+        lastHere = here;
+      }
     }, 250);
   }
 
@@ -2511,11 +2590,12 @@
   // the Versions panel knows when each build was first seen.
   (async () => {
     try {
-      const head = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store' });
+      // Always the entry page: one version per prototype, not per page.
+      const head = await fetch('/', { method: 'HEAD', cache: 'no-store' });
       const tag = head.headers.get('etag');
       if (tag) state.proto = tag.replace(/^W\//, '').replace(/"/g, '').slice(0, 80);
       else {
-        const html = await (await fetch(location.pathname, { cache: 'no-store' })).text();
+        const html = await (await fetch('/', { cache: 'no-store' })).text();
         let h = 5381;
         for (let i = 0; i < html.length; i++) h = ((h << 5) + h + html.charCodeAt(i)) >>> 0;
         state.proto = 'v' + h.toString(36);
@@ -2526,14 +2606,23 @@
     }
   })();
 
-  // "New since my last visit" window: remember when the previous visit started.
+  // "New since my last visit": a visit is a browser session (tab lifetime), so
+  // full-page hops inside it — other pages, reload-teleports — don't reset it.
   try {
-    state.prevVisit = Number(localStorage.getItem('fp_last_visit') || 0);
-    localStorage.setItem('fp_last_visit', String(Date.now()));
+    if (!sessionStorage.getItem('fp_session')) {
+      const prev = Number(localStorage.getItem('fp_last_visit') || 0);
+      localStorage.setItem('fp_prev_visit', String(prev));
+      localStorage.setItem('fp_last_visit', String(Date.now()));
+      sessionStorage.setItem('fp_session', String(Date.now()));
+    }
+    state.prevVisit = Number(localStorage.getItem('fp_prev_visit') || 0);
+    state.bootAt = Number(sessionStorage.getItem('fp_session')) || Date.now();
   } catch {
     state.prevVisit = 0;
+    state.bootAt = Date.now();
   }
-  state.bootAt = Date.now();
+  // The "new" window closes after a minute even on a quiet room.
+  setTimeout(() => renderAll(), Math.max(0, 60000 - (Date.now() - state.bootAt)) + 50);
 
   // Deep link: /?comment=<id> — strip it from the URL immediately (a
   // reload-teleport must not re-trigger it) and jump after boot.
