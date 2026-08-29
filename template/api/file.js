@@ -16,16 +16,19 @@ const SAFE = /^(previews|attach|shots)\/[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}
 export default async function handler(req, res) {
   if (applyCors(req, res, process.env.ALLOWED_ORIGINS)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const url = new URL(req.url, 'http://x');
+  // Embed mode: <img> tags cannot send an Authorization header, so the overlay
+  // appends the session token as ?token= (same signed token, same checks).
+  const token = url.searchParams.get('token');
   const session = await sessionFromHeaders(
     req.headers.cookie || '',
-    req.headers.authorization || '',
+    req.headers.authorization || (token ? `Bearer ${token}` : ''),
     process.env.SESSION_SECRET
   );
   if (!session) return res.status(401).json({ error: 'Not authenticated' });
 
   const room = roomFromReq(req);
   const root = room ? `rooms/${room}/` : '';
-  const url = new URL(req.url, 'http://x');
   const rel = String(url.searchParams.get('p') || '');
   if (!SAFE.test(rel) || rel.includes('..')) return res.status(400).json({ error: 'Bad path' });
 

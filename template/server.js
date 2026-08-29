@@ -31,11 +31,13 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
 const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail } = await import('./lib/threads.js');
+const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const COMMENTS_FILE = path.join(DATA, 'comments.json');
+const FILES = path.join(DATA, 'files'); // previews/, attach/ (same pathnames as the Blob edition)
 
 const argv = process.argv.slice(2);
 const portFlag = argv.indexOf('--port');
@@ -117,6 +119,28 @@ function persist() {
   return writeChain;
 }
 
+/* ---------- media files ---------- */
+
+const SAFE_FILE = /^(previews|attach|shots)\/[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}\.(jpe?g|png|webp)$/;
+const MIME_IMG = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+async function putFileLocal(room, rel, buf) {
+  const file = path.join(FILES, room ? `rooms/${room}/` : '', rel);
+  if (!file.startsWith(FILES + path.sep)) throw new Error('bad path');
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(file, buf);
+}
+
+async function storeImagesLocal(room, tid, kind, images, now) {
+  const paths = [];
+  for (const [i, img] of parseImages(images).entries()) {
+    const rel = `${kind}/${tid}/${String(now).padStart(14, '0')}-${i}.${img.ext}`;
+    await putFileLocal(room, rel, img.buf);
+    paths.push(rel);
+  }
+  return paths;
+}
+
 /* ---------- helpers ---------- */
 
 function json(res, status, payload) {
@@ -134,7 +158,7 @@ function readBody(req) {
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 1024 * 1024) {
+      if (size > 4 * 1024 * 1024) { // three 1.5 MB images as base64
         req.destroy();
         resolve(null);
         return;
@@ -217,6 +241,7 @@ async function apiComments(req, res, session) {
   const body = (await readBody(req)) || {};
   const action = body.action;
   const now = Date.now();
+  const room = roomFromReq(req);
 
   if (action === 'edge') {
     const from = clean(body.from, 64);
@@ -251,8 +276,11 @@ async function apiComments(req, res, session) {
       n: nextNumber(S.threads),
       trail: sanitizeTrail(body.trail),
       resolved: false,
+      preview: null,
       messages: [{ author, role, text, at: now }],
     };
+    const img = await storeImagesLocal(room, thread.id, 'attach', body.images, now);
+    if (img.length) thread.messages[0].img = img;
     S.threads = assignNumbers([...S.threads, thread]);
     await persist();
     return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
@@ -265,10 +293,23 @@ async function apiComments(req, res, session) {
     return json(res, 404, { error: 'Thread not found' });
   }
 
+  if (action === 'preview') {
+    const own = thread.author === author && thread.authorRole === role;
+    if (!own && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    const img = parseImageDataUrl(body.image);
+    if (!img) return json(res, 400, { error: 'Bad image' });
+    const rel = `previews/${tid}/${String(now).padStart(14, '0')}.${img.ext}`;
+    await putFileLocal(room, rel, img.buf);
+    thread.preview = rel;
+    await persist();
+    return json(res, 200, { preview: rel });
+  }
+
   if (action === 'reply') {
     const text = clean(body.text, MAX_TEXT);
     if (!text) return json(res, 400, { error: 'Missing text' });
-    thread.messages.push({ author, role, text, at: now });
+    const img = await storeImagesLocal(room, tid, 'attach', body.images, now);
+    thread.messages.push({ author, role, text, at: now, ...(img.length ? { img } : {}) });
   } else if (action === 'edit') {
     const text = clean(body.text, MAX_TEXT);
     const target = Number(body.at);
@@ -387,6 +428,30 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/comments') {
       if (!session) return json(res, 401, { error: 'Not authenticated' });
       return await apiComments(req, res, session);
+    }
+    if (pathname === '/api/file') {
+      const u = new URL(req.url, 'http://local');
+      const token = u.searchParams.get('token');
+      const s2 = session || (await sessionFromHeaders('', token ? `Bearer ${token}` : '', SECRETS.sessionSecret));
+      if (!s2) return json(res, 401, { error: 'Not authenticated' });
+      const rel = String(u.searchParams.get('p') || '');
+      if (!SAFE_FILE.test(rel)) return json(res, 400, { error: 'Bad path' });
+      const room = roomFromReq(req);
+      const [kind, key] = rel.split('/');
+      if (kind !== 'shots') {
+        const t = roomStore(room).threads.find((x) => x.id === key);
+        if (!t || !canSee(s2.r, t)) return json(res, 404, { error: 'Not found' });
+      }
+      const file = path.join(FILES, room ? `rooms/${room}/` : '', rel);
+      const st = fs.statSync(file, { throwIfNoEntry: false });
+      if (!st?.isFile()) return json(res, 404, { error: 'Not found' });
+      res.writeHead(200, {
+        'Content-Type': MIME_IMG[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream',
+        'Content-Length': st.size,
+        'Cache-Control': 'private, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return fs.createReadStream(file).pipe(res);
     }
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
 

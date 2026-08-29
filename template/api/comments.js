@@ -1,7 +1,8 @@
 import {
-  clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, navPatch,
+  clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
   nextNumber, sanitizeTrail,
 } from '../lib/threads.js';
+import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
 import { createStateStore } from '../lib/state.js';
 import { sessionFromHeaders } from '../lib/session.js';
@@ -64,6 +65,20 @@ export default async function handler(req, res) {
   const action = body.action;
   const now = Date.now();
   const eventPath = (tid) => `${root}threads/${tid}/${ts(now)}-${uuid()}.json`;
+  // Attachments arrive as data URLs; the payload cap keeps the request under
+  // the platform body limit. Pathnames are stored relative to <root>.
+  if (Array.isArray(body.images) && JSON.stringify(body.images).length > 3.2e6) {
+    return res.status(413).json({ error: 'Images too large' });
+  }
+  async function storeImages(tid, kind, images) {
+    const paths = [];
+    for (const [i, img] of parseImages(images).entries()) {
+      const rel = `${kind}/${tid}/${ts(now)}-${i}.${img.ext}`;
+      await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
+      paths.push(rel);
+    }
+    return paths;
+  }
 
   if (action === 'edge') {
     const from = clean(body.from, 64);
@@ -97,15 +112,18 @@ export default async function handler(req, res) {
       n: nextNumber(before.threads),
       trail: sanitizeTrail(body.trail),
     };
+    const img = await storeImages(tid, 'attach', body.images);
+    const firstMsg = { author, role, text, at: now, ...(img.length ? { img } : {}) };
     const thread = {
       id: tid,
       createdAt: now,
       author,
       ...first,
       resolved: false,
-      messages: [{ author, role, text, at: now }],
+      preview: null,
+      messages: [firstMsg],
     };
-    await storage.appendEvent(eventPath(tid), { type: 'msg', at: now, author, role, text, first });
+    await storage.appendEvent(eventPath(tid), { type: 'msg', ...firstMsg, first });
     const { state, path } = await store.mutate(root, (s) => ({ threads: applyCreate(s.threads, thread) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
@@ -117,11 +135,25 @@ export default async function handler(req, res) {
   const existing = cur.threads.find((t) => t.id === tid);
   if (!existing || !canSee(role, existing)) return res.status(404).json({ error: 'Thread not found' });
 
+  if (action === 'preview') {
+    const own = existing.author === author && existing.authorRole === role;
+    if (!own && role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const img = parseImageDataUrl(body.image);
+    if (!img) return res.status(400).json({ error: 'Bad image' });
+    const rel = `previews/${tid}/${ts(now)}.${img.ext}`;
+    await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, preview: rel });
+    const { path } = await store.mutate(root, (s) => ({ threads: applyPreview(s.threads, tid, rel) }));
+    res.setHeader('X-Store-Path', path);
+    return res.status(200).json({ preview: rel });
+  }
+
   let patch;
   if (action === 'reply') {
     const text = clean(body.text, MAX_TEXT);
     if (!text) return res.status(400).json({ error: 'Missing text' });
-    const msg = { author, role, text, at: now };
+    const img = await storeImages(tid, 'attach', body.images);
+    const msg = { author, role, text, at: now, ...(img.length ? { img } : {}) };
     await storage.appendEvent(eventPath(tid), { type: 'msg', ...msg });
     patch = (s) => ({ threads: applyReply(s.threads, tid, msg) });
   } else if (action === 'edit') {
