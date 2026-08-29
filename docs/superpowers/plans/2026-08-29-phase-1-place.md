@@ -22,6 +22,8 @@ Executed on branch `v2`; all 11 tasks done, e2e 4/4 local + 3/3 lab, lab redeplo
 - Two timing waits in `place.spec.mjs` are deliberate and commented: a 150 ms frame settle before clicking a just-inserted element (compositor hit-testing uses the previous frame), and a `designer.reload()` before sort assertions (overlay polls every 25 s).
 - Sidebar "Newest" sorts by last activity, so the lab shows `#14 #13 #12 #10 #11` — replies move threads up. Intended.
 
+**Critic review (post-execution) — outcomes:** BUG-1 stored `page` → `location.href` (javascript:/open redirect) → `sanitizePage()` on both servers + `deepLinkUrl` builds via `pathname`; BUG-2 in-page anchor hash → `onThisScreen` accepts anchor presence over hash; BUG-3 observer blind to `hidden/open/aria-*` → attributeFilter extended; RISK-1 guided mode → popover opened alongside the toast; RISK-2 floating-layer false positives → recent outside click required, landmarks excluded, `containerOpen()` skips replay and restores the approximate pin; RISK-3 → trail seed recency 2.5 s, replay skips stale steps; RISK-4 → `numLabel()`, Worker edition documented as v1-frozen; RISK-5 → trip ids in `goTo`/`openAtState`; RISK-7 → `maxN` high-water mark in the state doc; RISK-8 → only *down* + click stopped at the host; §7.2 → open thread restored after H; NITs → id tie-break, seed sorted by `createdAt`, server anchor cap, dead counter removed, spec §5.6 wording. Not done (accepted): RISK-6 focus-outside/inert dialogs — documented in README limitations; tests for ghost stacking/v1 fallback/cross-document goTo — Phase 5 backlog.
+
 ## Global Constraints
 
 - The client role must never receive designer threads from the API — re-verify after any API change (spec §1).

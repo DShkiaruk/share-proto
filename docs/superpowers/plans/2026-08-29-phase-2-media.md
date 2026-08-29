@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-share-proto-v2-design.md` — §4.5, §7.3 (thumbnail on hover), §7.4, §8.1, §8.2, §10 (upload caps); §8.3 (shots) is Phase 4.
 
+## Execution notes (2026-08-29)
+
+All 8 tasks done; local e2e 4 (place) + 3 (media), lab smoke 3/3 (one transient failure of the lab "designer leaves a comment" test right after the media deploy — passed 3× afterwards; watch item), lab redeployed, preview verified on the real prototype (14 KB JPEG via /api/file). Deviations:
+- Overlay `refresh()` re-renders only when a thread signature changes, and `onMutate` re-renders the open sidebar only on a screen change — a wholesale rebuild under the cursor swallowed clicks (found by `place.spec` once previews started arriving ~1 s after a post).
+- Two local Playwright projects (`local-place` → `local-media`, `workers: 1`) share the fixture server; ordering keeps count-based assertions valid.
+- `commentAt` in `place.spec` waits for the overlay's own state (`window.__fp`) to hold the preview before same-document navigation.
+- Paperclip button added next to paste/drop (touch has no paste); `?token=` accepted by `/api/file` for embed-mode `<img>`.
+
 ## Global Constraints
 
 - Client role never receives designer threads or their media — `/api/file` checks visibility (spec §1, §4.5).
