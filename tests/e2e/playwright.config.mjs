@@ -1,11 +1,12 @@
 import { defineConfig } from '@playwright/test';
 
+// Local projects share one fixture server (webServer below) and therefore one
+// comment store: they run in a fixed order, one worker, so counts and numbers
+// asserted by an earlier spec are not disturbed by a later one.
+const local = { baseURL: 'http://localhost:4173', viewport: { width: 1280, height: 800 } };
 const projects = [
-  {
-    name: 'local',
-    testMatch: /place\.spec\.mjs/,
-    use: { baseURL: 'http://localhost:4173', viewport: { width: 1280, height: 800 } },
-  },
+  { name: 'local-place', testMatch: /place\.spec\.mjs/, use: local },
+  { name: 'local-media', testMatch: /media\.spec\.mjs/, use: local, dependencies: ['local-place'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({
@@ -19,6 +20,8 @@ export default defineConfig({
   testDir: '.',
   timeout: 60_000,
   retries: 0,
+  workers: 1,
+  fullyParallel: false,
   use: { trace: 'retain-on-failure' },
   reporter: [['list']],
   projects,

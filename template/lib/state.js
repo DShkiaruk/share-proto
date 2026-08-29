@@ -9,7 +9,7 @@ import { assemble, navPatch } from './threads.js';
    when there was no document. Nothing here overwrites a document it has not
    seen, so two racing writers can never silently erase each other's work. */
 
-export const emptyState = () => ({ v: 2, threads: [], nav: {}, updatedAt: 0 });
+export const emptyState = () => ({ v: 2, threads: [], nav: {}, maxN: 0, updatedAt: 0 });
 
 export const isValidState = (d) =>
   Boolean(d && d.v === 2 && Array.isArray(d.threads) && d.nav && typeof d.nav === 'object');
@@ -32,7 +32,8 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
       .sort((a, b) => a.at - b.at);
     let nav = {};
     for (const e of edges) nav = navPatch(nav, e.from, e.to, e.anchor, e.at, navCap);
-    return { ...emptyState(), threads, nav, updatedAt: Date.now() };
+    const maxN = Math.max(0, ...threads.map((t) => t.n || 0));
+    return { ...emptyState(), threads, nav, maxN, updatedAt: Date.now() };
   }
 
   // Read the document; rebuild it from events when missing or corrupt.

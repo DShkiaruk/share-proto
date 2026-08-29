@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
-  assignNumbers, nextNumber, sanitizeTrail, applyPreview,
+  assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -168,4 +168,22 @@ test('applyPreview sets the thread preview without touching other threads', () =
   const out = applyPreview(base, 'a', 'previews/a/9.jpg');
   assert.equal(out[0].preview, 'previews/a/9.jpg');
   assert.equal(out[1].preview, null);
+});
+
+test('sanitizePage accepts same-origin paths with hashes and rejects anything URL-like', () => {
+  assert.equal(sanitizePage('/'), '/');
+  assert.equal(sanitizePage('/index.html#/settings'), '/index.html#/settings');
+  assert.equal(sanitizePage('javascript:alert(1)//'), null);
+  assert.equal(sanitizePage('//evil.com/a'), null);
+  assert.equal(sanitizePage('https://evil.com'), null);
+  assert.equal(sanitizePage('/a b'), null);
+  assert.equal(sanitizePage('/' + 'x'.repeat(300)), null);
+  assert.equal(sanitizePage(42), null);
+});
+
+test('assignNumbers breaks createdAt ties by id so live and rebuilt documents agree', () => {
+  const a = assignNumbers([{ id: 'b', createdAt: 5 }, { id: 'a', createdAt: 5 }]);
+  const b = assignNumbers([{ id: 'a', createdAt: 5 }, { id: 'b', createdAt: 5 }]);
+  assert.deepEqual(Object.fromEntries(a.map((t) => [t.id, t.n])), Object.fromEntries(b.map((t) => [t.id, t.n])));
+  assert.equal(a.find((t) => t.id === 'a').n, 1);
 });

@@ -14,7 +14,16 @@ async function commentAt(page, locator, text) {
   await page.keyboard.press('Enter');
   await expect(inOverlay(page, '.popover .msg .text').filter({ hasText: text })).toBeVisible({ timeout: 10_000 });
   const { threads } = await apiGet(page, '/api/comments');
-  return threads.find((t) => t.messages[0]?.text === text);
+  const created = threads.find((t) => t.messages[0]?.text === text);
+  // The viewport preview lands ~1 s later and triggers a refresh; wait for it so
+  // a later step is not racing that re-render (same-document hash navigation
+  // keeps this overlay instance alive).
+  await page.waitForFunction(
+    (id) => Boolean(window.__fp?.state.threads.find((t) => t.id === id)?.preview),
+    created.id,
+    { timeout: 15_000 }
+  );
+  return created;
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -52,8 +61,8 @@ test('a comment on another hash page: sidebar row navigates there in one click; 
   expect(t.page).toBe('/#/settings');
   expect(t.screenLabel).toBe('Settings');
 
-  await page.goto('/#/home');
-  await page.waitForSelector('[data-fp-host]');
+  await page.goto('/#/home'); // same document: only the hash changes
+  await page.waitForFunction(() => window.__fp?.state.screen === 'Home'); // overlay settled after the route change
   await mouseClick(page, inOverlay(page, '.tb-btn').nth(1)); // Threads
   const row = inOverlay(page, '.sb-row').filter({ hasText: 'on settings' });
   await mouseClick(page, row);

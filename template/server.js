@@ -30,7 +30,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail } = await import('./lib/threads.js');
+const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage } = await import('./lib/threads.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -263,6 +263,7 @@ async function apiComments(req, res, session) {
   if (action === 'create') {
     const text = clean(body.text, MAX_TEXT);
     if (!text) return json(res, 400, { error: 'Missing text' });
+    if (JSON.stringify(body.anchor || {}).length > 4000) return json(res, 400, { error: 'Anchor too large' });
     const thread = {
       id: crypto.randomUUID(),
       createdAt: now,
@@ -272,8 +273,8 @@ async function apiComments(req, res, session) {
       screenLabel: clean(body.screenLabel, 120),
       anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
       proto: clean(body.proto, 64) || null,
-      page: clean(body.page, 300) || null,
-      n: nextNumber(S.threads),
+      page: sanitizePage(body.page),
+      n: Math.max(nextNumber(S.threads), (S.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
       resolved: false,
       preview: null,
@@ -282,6 +283,7 @@ async function apiComments(req, res, session) {
     const img = await storeImagesLocal(room, thread.id, 'attach', body.images, now);
     if (img.length) thread.messages[0].img = img;
     S.threads = assignNumbers([...S.threads, thread]);
+    S.maxN = Math.max(S.maxN || 0, ...S.threads.map((t) => t.n || 0));
     await persist();
     return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
   }

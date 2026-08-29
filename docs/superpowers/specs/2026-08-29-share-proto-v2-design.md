@@ -116,7 +116,7 @@ Deep links keep `location.hash` and unrelated query params: only the `comment` p
 
 ### 5.6 Screen identity fallbacks
 
-`screenLabel()` order: `[data-screen]` on appRoot or its first child → composite h1–h3 (v1) → `location.hash` if non-empty → largest visible text node ≤ 40 chars → `document.title`. Labels derived from `document.title` remain "fallback" labels and never create graph edges.
+`screenLabel()` order: `[data-screen]` on appRoot or its first child → composite h1–h3 (v1) → `location.hash` if non-empty → first visible short sub-heading (h4–h6, `[role=heading]`, `legend`, `strong`, ≤ 40 chars) → `document.title`. Labels derived from `document.title` remain "fallback" labels and never create graph edges.
 
 ## 6. Comment workflow
 

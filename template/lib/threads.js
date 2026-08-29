@@ -8,6 +8,15 @@
 
 export const clean = (str, max) => String(str || '').trim().slice(0, max);
 
+// A stored page is a same-origin path (+ optional hash). Anything else — a
+// scheme, a protocol-relative host, whitespace — is dropped: the overlay feeds
+// this into location.href, so it must never become a URL of its own.
+export function sanitizePage(raw) {
+  if (typeof raw !== 'string') return null;
+  const p = raw.trim();
+  return /^\/(?!\/)[^\s]{0,299}$/.test(p) ? p : null;
+}
+
 export const canSee = (role, thread) => role === 'designer' || thread.authorRole === 'client';
 
 // Global comment numbers. Valid unique numbers are kept; missing or duplicate
@@ -15,7 +24,7 @@ export const canSee = (role, thread) => role === 'designer' || thread.authorRole
 // collision). Called on every assemble() and applyCreate(), so a rebuild from
 // events and a live patch agree.
 export function assignNumbers(threads) {
-  const sorted = threads.slice().sort((a, b) => a.createdAt - b.createdAt);
+  const sorted = threads.slice().sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
   const used = new Set();
   const out = new Map();
   for (const t of sorted) {

@@ -15,7 +15,7 @@ The `template/` next to this file already contains the whole system — auth mid
 |---|---|---|
 | **Vercel** (default) | permanent link, no infra of your own | Steps 1–7 below |
 | **Local** | nothing may leave the machine / no Vercel account | "Local mode — no Vercel" |
-| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel, or `worker/`) |
+| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel; `worker/` still speaks the v1 API — no numbers/trails/previews) |
 
 If the user didn't say, default to Vercel and mention the other two in one line.
 
@@ -175,7 +175,7 @@ End your final message with this standout block (translated to the user's langua
 
 Then briefly, in prose:
 
-- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back).
+- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back). Each comment keeps a picture of the screen it was left on (hover a thread in the sidebar to see it); reviewers can paste, drop or attach screenshots to any message.
 - Roles: designers see all comments; the client sees only client comments (server-enforced).
 - To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
 - If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.

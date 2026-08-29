@@ -65,6 +65,10 @@
       '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
     ),
     edit: svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
+    paperclip: svg(
+      '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
+    ),
+    eyeSmall: svg('<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
     grip: svg(
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
@@ -95,6 +99,8 @@
   // Identity comes from login (name + password) via the signed session;
   // the server stamps every comment with it.
   const myLabel = () => state.name || roleLabel();
+  // A server that predates numbering (the Worker edition) sends no `n`.
+  const numLabel = (t) => (Number.isInteger(t.n) ? `#${t.n}` : '');
 
   /* ---------- DOM helpers ---------- */
 
@@ -195,7 +201,9 @@
   // prototype's own menus and popovers — they would close before a comment
   // could be anchored inside them. Our own document-level listeners run in
   // the capture phase and are unaffected.
-  for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend']) {
+  // Only the *down* and click events: stopping the *up* events would strand a
+  // prototype drag that ends over the overlay.
+  for (const type of ['pointerdown', 'mousedown', 'click', 'touchstart']) {
     host.addEventListener(type, (e) => e.stopPropagation());
   }
 
@@ -299,27 +307,32 @@
   // by ARIA role, by open-state convention, or by being a floating layer that
   // does not cover the whole viewport. Also: the element a trail trigger
   // aria-controls. Null for ordinary page content.
+  const LANDMARK_TAGS = /^(nav|header|aside|footer)$/i;
+  const LANDMARK_ROLES = /^(navigation|banner|complementary|contentinfo)$/;
+
   function findContainer(target) {
     const rootEl = appRoot();
     const viewport = innerWidth * innerHeight;
+    const last = trail.at(-1);
+    const lastEl = last && Date.now() - (last.at || 0) < 15000 ? locateAnchor(last.anchor).el : null;
     for (let n = target; n && n !== rootEl && n !== document.body; n = n.parentElement) {
       const role = n.getAttribute('role') || '';
       const byRole =
         CONTAINER_ROLES.test(role) || n.getAttribute('aria-modal') === 'true' || n.getAttribute('data-state') === 'open';
       let byLayer = false;
-      if (!byRole) {
+      if (!byRole && !LANDMARK_TAGS.test(n.tagName) && !LANDMARK_ROLES.test(role)) {
         const cs = getComputedStyle(n);
         if ((cs.position === 'fixed' || cs.position === 'absolute') && (parseInt(cs.zIndex, 10) || 0) >= 1) {
           const r = n.getBoundingClientRect();
-          byLayer = r.width * r.height > 0 && r.width * r.height < 0.9 * viewport;
+          // A floating layer counts only when a recent click *outside* it plausibly
+          // opened it — fixed headers and sidebars fail this test.
+          byLayer = r.width * r.height > 0 && r.width * r.height < 0.9 * viewport && Boolean(lastEl) && !n.contains(lastEl);
         }
       }
       if (byRole || byLayer) return describeContainer(n, role);
     }
-    const last = trail.at(-1);
-    if (last) {
-      const trig = locateAnchor(last.anchor).el;
-      const id = trig?.getAttribute('aria-controls');
+    if (lastEl) {
+      const id = lastEl.getAttribute('aria-controls');
       const ctl = id ? document.getElementById(id) : null;
       if (ctl && ctl.contains(target)) return describeContainer(ctl, ctl.getAttribute('role') || '');
     }
@@ -427,13 +440,17 @@
     if (path !== location.pathname) return false;
     return !hash || hash === location.hash;
   }
+  // Built by assigning pathname (never by parsing the stored string as a URL),
+  // so a hostile `page` can't smuggle a scheme or a host into location.href.
   function deepLinkUrl(t) {
     const { path, hash } = splitPage(t.page || location.pathname);
-    const u = new URL(path || '/', location.origin);
+    const u = new URL(location.origin);
+    u.pathname = path || '/';
     u.searchParams.set('comment', t.id);
     u.hash = hash;
     return u.href;
   }
+  const samePath = (tPage) => !tPage || splitPage(tPage).path === location.pathname;
 
   // Older builds used a single-heading label; newer ones join two ("A · B").
   // A legacy label equals the first part of its composite successor.
@@ -446,8 +463,11 @@
   // A comment lives on the PAGE it was left on.
   // Page check first: on multi-page prototypes two pages can share headings,
   // and a label match alone would render the pin on the wrong page.
+  // The anchored element being present beats a hash mismatch: in-page anchor
+  // links ("#pricing") change the hash without changing the page.
   const onThisScreen = (t) =>
-    pageMatches(t.page) && (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
+    (pageMatches(t.page) || (samePath(t.page) && Boolean(locateAnchor(t.anchor).el))) &&
+    (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
 
   /* ---------- api ---------- */
 
@@ -611,7 +631,111 @@
     (nameIn.value ? passIn : nameIn).focus();
   }
 
+  /* ---------- media ---------- */
+
+  const fileUrl = (rel) =>
+    apiUrl('/api/file') +
+    (ROOM ? '&' : '?') +
+    `p=${encodeURIComponent(rel)}` +
+    (EMBED && authToken ? `&token=${encodeURIComponent(authToken)}` : '');
+
+  let shotLib = null;
+  function loadScreenshotLib() {
+    if (shotLib) return shotLib;
+    shotLib = new Promise((resolve) => {
+      if (window.modernScreenshot) return resolve(window.modernScreenshot);
+      const sc = document.createElement('script');
+      sc.src = (EMBED ? API_ORIGIN : '') + '/screenshot.js';
+      sc.onload = () => resolve(window.modernScreenshot || null);
+      sc.onerror = () => resolve(null);
+      document.head.appendChild(sc);
+    });
+    return shotLib;
+  }
+
+  // Rasterize the current viewport with the pin marked, downscale, and attach it
+  // to the thread. Runs after the post succeeded; any failure is silent — a
+  // comment without a picture is still a comment.
+  async function capturePreview(thread, point) {
+    try {
+      const lib = await loadScreenshotLib();
+      if (!lib) return;
+      const scale = Math.min(1, 960 / innerWidth);
+      const full = await Promise.race([
+        lib.domToCanvas(document.documentElement, {
+          scale,
+          width: innerWidth,
+          height: innerHeight,
+          filter: (node) => node !== host,
+          style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+      ]);
+      const c = document.createElement('canvas');
+      c.width = Math.round(innerWidth * scale);
+      c.height = Math.round(innerHeight * scale);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(full, 0, 0, c.width, c.height);
+      if (point) {
+        const x = point.x * scale;
+        const y = point.y * scale;
+        ctx.beginPath();
+        ctx.arc(x, y, 11, 0, Math.PI * 2);
+        ctx.fillStyle = '#3b82f6';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+      }
+      const image = c.toDataURL('image/jpeg', 0.8);
+      if (image.length > 1.4e6) return; // ~1 MB of base64 — skip rather than fail the request
+      await api('POST', { action: 'preview', threadId: thread.id, image });
+      refresh();
+    } catch {
+      /* no preview */
+    }
+  }
+
+  // Client-side downscale for attachments: ≤ 1600 px, JPEG.
+  function shrinkImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k));
+        c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('bad image'));
+      };
+      img.src = url;
+    });
+  }
+
+  let lightbox = null;
+  function closeLightbox() {
+    lightbox?.remove();
+    lightbox = null;
+  }
+  function openLightbox(src) {
+    closeLightbox();
+    lightbox = el('div', 'lightbox');
+    const im = el('img');
+    im.src = src;
+    im.alt = '';
+    lightbox.appendChild(im);
+    lightbox.addEventListener('click', closeLightbox);
+    root.appendChild(lightbox);
+  }
+
   let inflight = null;
+  let lastSig = '';
   function refresh() {
     if (!inflight) {
       inflight = (async () => {
@@ -621,7 +745,15 @@
           state.name = data.name || '';
           state.nav = data.nav || {};
           state.threads = data.threads;
-          renderAll();
+          // Re-render only on real change: a wholesale sidebar rebuild under the
+          // cursor would swallow the click the reviewer is about to make.
+          const sig = JSON.stringify(
+            state.threads.map((t) => [t.id, lastAt(t), t.resolved, t.preview, t.messages.length, t.n])
+          );
+          if (sig !== lastSig || !lastSig) {
+            lastSig = sig;
+            renderAll();
+          }
           // Live-update an open thread when new replies arrive — unless the
           // viewer is mid-typing a reply.
           if (popover && state.active) {
@@ -791,6 +923,19 @@
     return arr.sort((a, b) => lastAt(b) - lastAt(a)); // newest (also inside "by screen" groups)
   }
 
+  // Is the comment's container currently rendered? Then nothing needs
+  // reopening — a missing anchor falls back to the approximate pin (v1 rule).
+  function containerOpen(t) {
+    const c = t.anchor?.container;
+    if (!c?.path) return false;
+    try {
+      const n = document.querySelector(c.path);
+      return Boolean(n && !n.hidden && n.getClientRects().length);
+    } catch {
+      return false;
+    }
+  }
+
   // The last trail click is the trigger that opened the commented state.
   function triggerOf(t) {
     const step = t.trail?.at(-1);
@@ -808,7 +953,7 @@
       p.style.background = pastel(t.author);
       if (isUnread(t)) p.appendChild(el('span', 'pin-dot'));
       if (t.id === state.active) p.classList.add('active');
-      p.setAttribute('aria-label', `Comment #${t.n} by ${t.author}`);
+      p.setAttribute('aria-label', `Comment ${numLabel(t)} by ${t.author}`.replace('  ', ' '));
       p.addEventListener('click', (e) => {
         e.stopPropagation();
         if (p.classList.contains('ghost')) goTo(t); // reopen the state, then show the real pin
@@ -835,7 +980,7 @@
       let pos = resolveAnchor(t.anchor);
       let ghost = false;
       if (!pos) {
-        if (t.anchor?.container) {
+        if (t.anchor?.container && !containerOpen(t)) {
           const trig = triggerOf(t);
           pos = trig?.pos || null;
           ghost = Boolean(pos);
@@ -848,6 +993,7 @@
         continue;
       }
       p.classList.toggle('ghost', ghost);
+      if (ghost) p.setAttribute('aria-label', `Comment ${numLabel(t)} by ${t.author} — inside a closed ${t.anchor.container.name || 'menu'}; click to open it`);
       p.style.background = ghost ? '' : pastel(t.author);
       const off = pos.x < -40 || pos.y < -40 || pos.x > innerWidth + 40 || pos.y > innerHeight + 40;
       p.style.display = off ? 'none' : '';
@@ -935,21 +1081,93 @@
       }
     });
     send.addEventListener('click', onSubmit);
-    row.append(ta, send);
-    return { row, ta, send };
+
+    // Attachments: paperclip button, paste, drop. Kept as data URLs until send.
+    const pending = [];
+    const input = el('input', 'attach-input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    const strip = el('div', 'attach-strip');
+    const attachBtn = el('button', 'attach-btn');
+    attachBtn.type = 'button';
+    attachBtn.append(icon('paperclip'));
+    attachBtn.title = 'Attach an image';
+    attachBtn.setAttribute('aria-label', 'Attach an image');
+    attachBtn.addEventListener('click', () => input.click());
+    const renderStrip = () => {
+      strip.replaceChildren();
+      strip.hidden = !pending.length;
+      pending.forEach((src, i) => {
+        const th = el('div', 'thumb');
+        const im = el('img');
+        im.src = src;
+        im.alt = `Attachment ${i + 1}`;
+        const rm = el('button', null, '×');
+        rm.type = 'button';
+        rm.setAttribute('aria-label', 'Remove attachment');
+        rm.addEventListener('click', () => {
+          pending.splice(i, 1);
+          renderStrip();
+        });
+        th.append(im, rm);
+        strip.appendChild(th);
+      });
+    };
+    const addFiles = async (files) => {
+      for (const f of [...files].filter((x) => x.type.startsWith('image/'))) {
+        if (pending.length >= 3) return toast('Up to 3 images per message');
+        try {
+          const src = await shrinkImage(f);
+          const total = pending.reduce((n, x) => n + x.length, 0) + src.length;
+          if (total > 3e6) return toast('Images too large — try fewer or smaller');
+          pending.push(src);
+        } catch {
+          toast('That file isn’t an image');
+        }
+      }
+      renderStrip();
+    };
+    input.addEventListener('change', () => {
+      addFiles(input.files);
+      input.value = '';
+    });
+    ta.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === 'file').map((it) => it.getAsFile());
+      if (files.length) {
+        e.preventDefault();
+        addFiles(files);
+      }
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('dragging'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('dragging');
+      if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+    });
+    strip.hidden = true;
+    row.append(ta, attachBtn, send, input);
+    const wrap = el('div', 'compose-wrap');
+    wrap.append(strip, row);
+    return { row: wrap, ta, send, images: () => pending.slice() };
   }
 
   function openComposer() {
     closePopover();
     popover = el('div', 'popover');
 
-    const { row, ta, send } = composeRow({
+    const { row, ta, send, images } = composeRow({
       placeholder: 'Add a comment',
       onSubmit: async () => {
         const text = ta.value.trim();
         if (!text) return;
         send.disabled = true;
         try {
+          const point = { x: state.draft.x, y: state.draft.y };
           const { thread } = await api('POST', {
             action: 'create',
             text,
@@ -959,7 +1177,10 @@
             proto: state.proto,
             page: currentPage(),
             trail: state.draft.trail,
+            images: images(),
           });
+          // Picture of where this was left — after the post, never blocking it.
+          (window.requestIdleCallback || setTimeout)(() => capturePreview(thread, point));
           state.draft = null;
           draftPin?.remove();
           draftPin = null;
@@ -993,7 +1214,7 @@
 
     const head = el('div', 'head');
     const who = el('div', 'who');
-    who.append(el('span', 'num', `#${t.n}`), avatar(t.author, 24), el('span', 'name', t.author));
+    who.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
     const rb = roleBadge(t);
     if (rb) who.appendChild(el('span', 'badge', rb));
     if (t.proto && state.proto && t.proto !== state.proto) {
@@ -1078,6 +1299,13 @@
     popover.appendChild(head);
 
     if (!pinEl && !onThisScreen(t)) {
+      if (t.preview) {
+        const pv = el('img', 'popover-preview');
+        pv.src = fileUrl(t.preview);
+        pv.alt = 'Where this comment is';
+        pv.addEventListener('click', () => openLightbox(fileUrl(t.preview)));
+        popover.appendChild(pv);
+      }
       const go = el('button', 'goto-row');
       go.append(icon('goto'), el('span', null, 'Go to comment'));
       if (t.screenLabel) go.appendChild(el('span', 'goto-screen', t.screenLabel));
@@ -1134,11 +1362,23 @@
         meta.appendChild(editBtn);
       }
       box.append(meta, textEl);
+      if (m.img?.length) {
+        const imgs = el('div', 'imgs');
+        for (const rel of m.img) {
+          const im = el('img');
+          im.src = fileUrl(rel);
+          im.loading = 'lazy';
+          im.alt = 'Attachment';
+          im.addEventListener('click', () => openLightbox(fileUrl(rel)));
+          imgs.appendChild(im);
+        }
+        box.appendChild(imgs);
+      }
       msgs.appendChild(box);
     }
     popover.appendChild(msgs);
 
-    const { row, ta, send } = composeRow({
+    const { row, ta, send, images } = composeRow({
       placeholder: 'Reply',
       bordered: true,
       onSubmit: async () => {
@@ -1146,7 +1386,7 @@
         if (!text) return;
         send.disabled = true;
         try {
-          await api('POST', { action: 'reply', threadId: t.id, text });
+          await api('POST', { action: 'reply', threadId: t.id, text, images: images() });
           await refresh();
           openThread(t.id, pinEls.get(t.id));
         } catch {
@@ -1219,7 +1459,7 @@
   // (opened a menu, a dialog…). Stored on a comment so "Go to comment" can
   // reproduce the state. Reset on screen change, keeping the click that caused it.
   let trail = [];
-  const trailStep = (anchor) => ({ anchor, txt: anchor.txt || null });
+  const trailStep = (anchor, at = Date.now()) => ({ anchor, txt: anchor.txt || null, at });
   document.addEventListener(
     'click',
     (e) => {
@@ -1374,7 +1614,7 @@
     for (let i = 0; i < steps.length; i++) {
       if (locateAnchor(t.anchor).pos) return true;
       const loc = locateAnchor(steps[i].anchor);
-      if (!loc.el) return false;
+      if (!loc.el) continue; // a stale step must not block the ones that still resolve
       synthClick(loc.el);
       const next = steps[i + 1];
       await waitFor(() => locateAnchor(t.anchor).pos || (next && locateAnchor(next.anchor).el), 1500);
@@ -1382,21 +1622,27 @@
     return Boolean(locateAnchor(t.anchor).pos);
   }
 
+  // Every goTo is a trip; a newer trip cancels the stages of an older one
+  // after each await (J pressed twice, a row clicked during a hash wait).
+  let trip = 0;
+
   // On the right screen: reopen the state if needed, then open the thread.
-  async function openAtState(t) {
+  async function openAtState(t, my = trip) {
     cancelJump();
-    if (!locateAnchor(t.anchor).pos && t.trail?.length) {
+    if (!locateAnchor(t.anchor).pos && t.trail?.length && !containerOpen(t)) {
       toastSticky('Opening the state with this comment…');
       await replayTrail(t);
+      if (my !== trip) return;
       clearSticky();
       syncScreen(); // a reopened dialog may carry its own heading
     }
-    if (locateAnchor(t.anchor).pos || !t.anchor?.container) return jumpToThread(t);
+    if (locateAnchor(t.anchor).pos || !t.anchor?.container || containerOpen(t)) return jumpToThread(t);
     armGuided(t, `Open “${t.anchor.container.name || 'the menu'}” — the comment will appear there · Esc to cancel`);
   }
 
   // One click from anywhere: other page → other screen → closed state → pin.
   async function goTo(t) {
+    const my = ++trip;
     if (state.presenting) togglePresent();
     if (state.pinsHidden) setPinsHidden(false);
     setSidebar(false);
@@ -1407,18 +1653,18 @@
       location.href = deepLinkUrl(t);
       return;
     }
-    const onScreen = () => !t.screenLabel || labelsMatch(screenLabel(), t.screenLabel);
-    if (!onScreen() && t.page && hash !== location.hash) {
+    if (!onThisScreen(t) && t.page && hash !== location.hash) {
       // Same document, another route: the hash is authoritative and free —
       // no need to walk the learned graph (which may not know the way back).
       toastSticky('Taking you to the comment…');
       location.hash = hash;
-      await waitFor(onScreen, 3000);
+      await waitFor(() => onThisScreen(t) || labelsMatch(screenLabel(), t.screenLabel), 3000);
+      if (my !== trip) return;
       clearSticky();
       syncScreen(); // the mutation observer is debounced; onThisScreen() must see the new label now
     }
-    if (!onScreen()) return autoNavigate(t);
-    return openAtState(t);
+    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t);
+    return openAtState(t, my);
   }
 
   async function autoNavigate(t) {
@@ -1504,6 +1750,8 @@
       message ||
         `Navigate to “${t.screenLabel || 'the screen with this comment'}” — it will open there · Esc to cancel`
     );
+    // The thread stays readable while the reviewer walks there.
+    if (!popover || state.active !== t.id) openThread(t.id, null);
   }
 
   function jumpToThread(t) {
@@ -1539,11 +1787,47 @@
     const t = state.threads.find((x) => x.id === state.pendingJump);
     if (!t) return cancelJump();
     if (!onThisScreen(t)) return;
-    if (t.anchor?.container && !locateAnchor(t.anchor).pos) return; // state still closed
+    if (t.anchor?.container && !locateAnchor(t.anchor).pos && !containerOpen(t)) return; // state still closed
     jumpToThread(t);
   }
 
+  let hoverCard = null;
+  let hoverTimer = null;
+  function hidePreviewCard() {
+    clearTimeout(hoverTimer);
+    hoverCard?.remove();
+    hoverCard = null;
+  }
+  function showPreviewCard(t, row) {
+    hidePreviewCard();
+    hoverCard = el('div', 'preview-card');
+    if (t.preview) {
+      const im = el('img');
+      im.src = fileUrl(t.preview);
+      im.alt = `Screen with comment #${t.n}`;
+      im.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openLightbox(fileUrl(t.preview));
+      });
+      hoverCard.appendChild(im);
+    } else {
+      hoverCard.appendChild(el('div', 'no-preview', t.screenLabel || 'No preview'));
+    }
+    const body = el('div', 'body');
+    body.append(
+      el('div', 'meta', [numLabel(t), t.author, t.resolved ? 'Resolved' : 'Open'].filter(Boolean).join(' · ')),
+      el('div', 'text', t.messages[0]?.text || '')
+    );
+    hoverCard.appendChild(body);
+    root.appendChild(hoverCard);
+    const r = row.getBoundingClientRect();
+    const w = 300;
+    hoverCard.style.left = `${Math.max(12, r.left - w - 12)}px`;
+    hoverCard.style.top = `${Math.min(Math.max(12, r.top), innerHeight - 260)}px`;
+  }
+
   function setSidebar(open) {
+    if (!open) hidePreviewCard();
     state.sidebar = open;
     sidebar.classList.toggle('open', open);
     if (open) renderSidebar();
@@ -1619,7 +1903,7 @@
       for (const t of sortThreads(items)) {
         const row = el('button', 'sb-row' + (t.resolved ? ' resolved' : '') + (isUnread(t) ? ' unread' : ''));
         const meta = el('div', 'meta');
-        meta.append(el('span', 'num', `#${t.n}`), avatar(t.author, 24), el('span', 'name', t.author));
+        meta.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
         const rb = roleBadge(t);
         if (rb) meta.appendChild(el('span', 'badge', rb));
         if (t.resolved) {
@@ -1636,6 +1920,22 @@
         if (t.anchor?.container?.name) extras.push(`in: ${t.anchor.container.name}`);
         if (extras.length) row.appendChild(el('div', 'replies', extras.join(' · ')));
         row.addEventListener('click', () => goTo(t));
+        // Desktop: hover shows the preview card; touch: an eye button does.
+        row.addEventListener('pointerenter', () => {
+          if (matchMedia('(pointer: coarse)').matches) return;
+          clearTimeout(hoverTimer);
+          hoverTimer = setTimeout(() => showPreviewCard(t, row), 350);
+        });
+        row.addEventListener('pointerleave', hidePreviewCard);
+        const eye = el('button', 'eye');
+        eye.append(icon('eyeSmall'));
+        eye.setAttribute('aria-label', 'Preview');
+        eye.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (hoverCard) hidePreviewCard();
+          else showPreviewCard(t, row);
+        });
+        meta.appendChild(eye);
         list.appendChild(row);
       }
     };
@@ -1723,9 +2023,8 @@
   let presentDot = null;
   function togglePresent() {
     state.presenting = !state.presenting;
-    state.presentToggles = (state.presentToggles || 0) + 1;
     if (state.presenting) {
-      presentSaved = { sidebar: state.sidebar };
+      presentSaved = { sidebar: state.sidebar, active: state.active };
       closePopover();
       cancelDraft();
       if (state.mode) setMode(false);
@@ -1750,9 +2049,11 @@
       presentDot = null;
       toolbar.style.display = '';
       pinsLayer.style.display = state.pinsHidden ? 'none' : '';
-      if (presentSaved?.sidebar) setSidebar(true);
+      const saved = presentSaved;
       presentSaved = null;
       renderAll();
+      if (saved?.sidebar) setSidebar(true);
+      if (saved?.active) openThread(saved.active, pinEls.get(saved.active));
     }
   }
 
@@ -1772,7 +2073,8 @@
       target instanceof HTMLElement &&
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (e.key === 'Escape') {
-      if (state.draft) cancelDraft();
+      if (lightbox) closeLightbox();
+      else if (state.draft) cancelDraft();
       else if (popover) closePopover();
       else if (state.pendingJump) cancelJump();
       else if (state.mode) setMode(false);
@@ -1790,6 +2092,7 @@
   document.addEventListener(
     'pointerdown',
     (e) => {
+      if (hoverCard && !e.composedPath().includes(hoverCard)) hidePreviewCard();
       if (!popover && !state.draft) return;
       if (e.composedPath().includes(host)) return;
       if (state.draft) cancelDraft();
@@ -1809,7 +2112,10 @@
       const prevScreen = state.screen;
       state.screen = screenLabel();
       state.screenLabel = screenLabel();
-      if (state.screen !== prevScreen) trail = lastNavClick ? [trailStep(lastNavClick.anchor)] : [];
+      if (state.screen !== prevScreen) {
+        // Seed the new screen's trail with the click that caused the change — only if recent.
+        trail = lastNavClick && Date.now() - lastNavClick.at < 2500 ? [trailStep(lastNavClick.anchor, lastNavClick.at)] : [];
+      }
       if (
         state.screen !== prevScreen &&
         lastNavClick &&
@@ -1822,7 +2128,10 @@
       detectTheme();
       positionPins();
       checkPendingJump();
-      if (state.sidebar) renderSidebar();
+      // Prototypes mutate constantly (animations, timers); rebuilding the open
+      // sidebar on every mutation swallows clicks. Its grouping only depends on
+      // the screen, so re-render on a screen change alone.
+      if (state.sidebar && state.screen !== prevScreen) renderSidebar();
     }, 250);
   }
 
@@ -1832,7 +2141,7 @@
     characterData: true,
     // class/style flips are how prototypes switch themes and screens
     attributes: true,
-    attributeFilter: ['class', 'style'],
+    attributeFilter: ['class', 'style', 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state'],
   });
   window.addEventListener('resize', onMutate);
   document.addEventListener('scroll', () => requestAnimationFrame(positionPins), {

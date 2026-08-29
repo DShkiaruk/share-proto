@@ -1,6 +1,6 @@
 import {
   clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, sanitizeTrail,
+  nextNumber, sanitizeTrail, sanitizePage,
 } from '../lib/threads.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
@@ -108,8 +108,9 @@ export default async function handler(req, res) {
       screenLabel: clean(body.screenLabel, 120),
       anchor,
       proto: clean(body.proto, 64) || null,
-      page: clean(body.page, 300) || null,
-      n: nextNumber(before.threads),
+      page: sanitizePage(body.page),
+      // Never reuse a number: max over live threads AND the document's high-water mark.
+      n: Math.max(nextNumber(before.threads), (before.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
     };
     const img = await storeImages(tid, 'attach', body.images);
@@ -124,7 +125,10 @@ export default async function handler(req, res) {
       messages: [firstMsg],
     };
     await storage.appendEvent(eventPath(tid), { type: 'msg', ...firstMsg, first });
-    const { state, path } = await store.mutate(root, (s) => ({ threads: applyCreate(s.threads, thread) }));
+    const { state, path } = await store.mutate(root, (s) => {
+      const threads = applyCreate(s.threads, thread);
+      return { threads, maxN: Math.max(s.maxN || 0, ...threads.map((t) => t.n || 0)) };
+    });
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
   }

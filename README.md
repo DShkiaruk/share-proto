@@ -50,7 +50,7 @@ The template is self-contained: append-only comment events in a private Blob sto
 
 ## How reviewers leave comments
 
-Sign in with a name + password (the password decides the role). Press **C** or hit Comment → click anywhere → type → Enter. Every comment gets a number (#1, #2…) that is the same for everyone, so "look at #7" works on a call. The Threads sidebar lists everything — sort by newest, oldest, unread or screen; designers can filter to client or team comments. Click a comment and the prototype takes you to it in one step: another page, another screen (the overlay learns the prototype's navigation from real clicks), even a comment left inside a dropdown or dialog — the state is reopened, and while it is closed a dashed ghost pin marks the button that opens it. **J**/**K** walk the comments, **H** hides everything for a clean presentation (a small dot in the corner brings it back). Reviewers can edit their own messages, copy a direct link to any comment, and comments left on an outdated build get an "Older version" badge.
+Sign in with a name + password (the password decides the role). Press **C** or hit Comment → click anywhere → type → Enter. Every comment gets a number (#1, #2…) that is the same for everyone, so "look at #7" works on a call. The Threads sidebar lists everything — sort by newest, oldest, unread or screen; designers can filter to client or team comments. Click a comment and the prototype takes you to it in one step: another page, another screen (the overlay learns the prototype's navigation from real clicks), even a comment left inside a dropdown or dialog — the state is reopened, and while it is closed a dashed ghost pin marks the button that opens it. **J**/**K** walk the comments, **H** hides everything for a clean presentation (a small dot in the corner brings it back). Each comment keeps a picture of the screen it was left on — hover a thread in the sidebar to see where it is — and reviewers can paste, drop or attach screenshots to any message. Reviewers can edit their own messages, copy a direct link to any comment, and comments left on an outdated build get an "Older version" badge.
 
 ## Limitations
 
@@ -58,5 +58,7 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - Vercel's free Hobby plan is formally for non-commercial use (Pro is $20/mo if needed).
 - Read state is per browser; there are no notifications outside the page (deliberate).
 - Comments and images live in a private Blob store; the API is the only reader.
+- Comments inside UI that closes on *focus* leaving it (some component libraries) or inside a native `<dialog>` opened with `showModal()` may not be placeable — the composer needs focus, and a modal dialog makes the rest of the page inert.
+- The Cloudflare Worker edition (`worker/`) still speaks the v1 API: no comment numbers, trails or previews until it is ported.
 
 MIT

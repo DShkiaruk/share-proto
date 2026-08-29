@@ -26,7 +26,8 @@ async function write(pathname, payload) {
   }
 }
 
-for (const [i, t] of data.threads.entries()) {
+const ordered = data.threads.slice().sort((a, b) => a.createdAt - b.createdAt);
+for (const [i, t] of ordered.entries()) {
   const [head, ...rest] = t.messages;
   await write(`${root}threads/${t.id}/${ts(t.createdAt)}-seed-0.json`, {
     type: 'msg', at: t.createdAt, author: head.author, role: head.role, text: head.text,
