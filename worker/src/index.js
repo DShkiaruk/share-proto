@@ -1,0 +1,298 @@
+/* Hosted comments server on Cloudflare Workers — the embed-mode backend.
+
+   Same API contract as template/server.js / template/api/*, minus the
+   prototype-serving parts (an embedded overlay lives on someone else's page;
+   this host only serves /overlay.js, /overlay.css and /api/*).
+
+   One Durable Object per comment room (= one per PR preview): a DO is
+   single-threaded, which gives the exact same race-free semantics as the
+   single-process local server. Threads are stored one-per-key (`t:<id>`), so
+   no value ever grows past DO storage limits. */
+
+import { DurableObject } from 'cloudflare:workers';
+import { createToken, sessionFromHeaders } from './session.js';
+
+const MAX_TEXT = 3000;
+const MAX_NAME = 40;
+const NAV_CAP = 500;
+const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+const clean = (str, max) => String(str || '').trim().slice(0, max);
+const canSee = (role, thread) => role === 'designer' || thread.authorRole === 'client';
+
+/* ---------- CORS (same semantics as template/lib/cors.js) ---------- */
+
+function originAllowed(origin, allowedEnv) {
+  if (!origin) return false;
+  for (const raw of String(allowedEnv || '').split(',')) {
+    const pat = raw.trim().toLowerCase().replace(/\/+$/, '');
+    if (!pat) continue;
+    const o = origin.toLowerCase();
+    if (pat === o) return true;
+    if (pat.includes('*')) {
+      const re = new RegExp(
+        '^' + pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+') + '$'
+      );
+      if (re.test(o)) return true;
+    }
+  }
+  return false;
+}
+
+function corsHeaders(req, env) {
+  const origin = req.headers.get('Origin');
+  if (!origin || !originAllowed(origin, env.ALLOWED_ORIGINS)) return {};
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+
+const json = (status, payload, extra = {}) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra },
+  });
+
+/* ---------- the room ---------- */
+
+export class CommentsRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.loaded = false;
+  }
+
+  async load() {
+    if (this.loaded) return;
+    const all = await this.ctx.storage.list();
+    this.threads = [];
+    this.nav = {};
+    for (const [key, value] of all) {
+      if (key.startsWith('t:')) this.threads.push(value);
+      else if (key === 'nav') this.nav = value;
+    }
+    this.threads.sort((a, b) => a.createdAt - b.createdAt);
+    this.loaded = true;
+  }
+
+  async getAll(role) {
+    await this.load();
+    const nav = {};
+    for (const [k, v] of Object.entries(this.nav)) nav[k] = v.anchor;
+    return { nav, threads: this.threads.filter((t) => canSee(role, t)) };
+  }
+
+  // Returns {status, payload}. Mirrors apiComments() in template/server.js —
+  // author identity comes from the signed session, never from the body.
+  async mutate(role, author, body) {
+    await this.load();
+    const action = body.action;
+    const now = Date.now();
+
+    if (action === 'edge') {
+      const from = clean(body.from, 64);
+      const to = clean(body.to, 64);
+      const anchor = body.anchor && typeof body.anchor === 'object' ? body.anchor : null;
+      if (!from || !to || from === to || !anchor || JSON.stringify(anchor).length > 3000) {
+        return { status: 400, payload: { error: 'Bad edge' } };
+      }
+      this.nav[`${from}>${to}`] = { anchor, at: now };
+      const keys = Object.keys(this.nav);
+      if (keys.length > NAV_CAP) {
+        keys.sort((a, b) => this.nav[a].at - this.nav[b].at);
+        while (keys.length > NAV_CAP) delete this.nav[keys.shift()];
+      }
+      await this.ctx.storage.put('nav', this.nav);
+      return { status: 200, payload: { ok: true } };
+    }
+
+    if (action === 'create') {
+      const text = clean(body.text, MAX_TEXT);
+      if (!text) return { status: 400, payload: { error: 'Missing text' } };
+      const thread = {
+        id: crypto.randomUUID(),
+        createdAt: now,
+        authorRole: role,
+        author,
+        screen: clean(body.screen, 64),
+        screenLabel: clean(body.screenLabel, 120),
+        anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
+        proto: clean(body.proto, 64) || null,
+        page: clean(body.page, 200) || null,
+        resolved: false,
+        messages: [{ author, role, text, at: now }],
+      };
+      await this.ctx.storage.put(`t:${thread.id}`, thread);
+      this.threads.push(thread);
+      return { status: 200, payload: { thread } };
+    }
+
+    const tid = String(body.threadId || '');
+    if (!/^[a-f0-9-]{36}$/.test(tid)) return { status: 404, payload: { error: 'Thread not found' } };
+    const thread = this.threads.find((t) => t.id === tid);
+    if (!thread || !canSee(role, thread)) {
+      return { status: 404, payload: { error: 'Thread not found' } };
+    }
+
+    if (action === 'reply') {
+      const text = clean(body.text, MAX_TEXT);
+      if (!text) return { status: 400, payload: { error: 'Missing text' } };
+      thread.messages.push({ author, role, text, at: now });
+    } else if (action === 'edit') {
+      const text = clean(body.text, MAX_TEXT);
+      const target = Number(body.at);
+      if (!text || !target) return { status: 400, payload: { error: 'Missing text or target' } };
+      const msg = thread.messages.find((m) => m.at === target);
+      if (!msg || msg.author !== author || msg.role !== role) {
+        return { status: 403, payload: { error: 'Not your message' } };
+      }
+      msg.text = text;
+      msg.edited = true;
+    } else if (action === 'resolve') {
+      thread.resolved = Boolean(body.resolved);
+    } else if (action === 'delete') {
+      const own = thread.authorRole === role && thread.author === author;
+      if (role !== 'designer' && !own) return { status: 403, payload: { error: 'Not allowed' } };
+      await this.ctx.storage.delete(`t:${tid}`);
+      this.threads = this.threads.filter((t) => t.id !== tid);
+      return { status: 200, payload: { ok: true } };
+    } else {
+      return { status: 400, payload: { error: 'Unknown action' } };
+    }
+
+    await this.ctx.storage.put(`t:${tid}`, thread);
+    return { status: 200, payload: { thread } };
+  }
+}
+
+/* ---------- the worker ---------- */
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const cors = corsHeaders(req, env);
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+    // Overlay assets: public script, served with open CORS so the overlay's
+    // cross-origin HEAD version-check works.
+    if (url.pathname === '/overlay.js' || url.pathname === '/overlay.css') {
+      const r = await env.ASSETS.fetch(req);
+      const h = new Headers(r.headers);
+      h.set('Access-Control-Allow-Origin', '*');
+      h.set('Access-Control-Expose-Headers', 'ETag');
+      return new Response(r.body, { status: r.status, headers: h });
+    }
+
+    if (url.pathname === '/api/login') {
+      if (req.method !== 'POST') return json(405, { error: 'Method not allowed' }, cors);
+      const body = await req.json().catch(() => ({}));
+      const cleanName = clean(body.name, MAX_NAME);
+      if (!cleanName) return json(400, { error: 'Missing name' }, cors);
+      const password = body.password;
+      const role =
+        password && password === env.DESIGNER_PASSWORD
+          ? 'designer'
+          : password && password === env.CLIENT_PASSWORD
+            ? 'client'
+            : null;
+      if (!role) {
+        await new Promise((r) => setTimeout(r, 800));
+        return json(401, { error: 'Wrong password' }, cors);
+      }
+      const token = await createToken(
+        { r: role, n: cleanName, exp: Date.now() + SIXTY_DAYS_MS },
+        env.SESSION_SECRET
+      );
+      return json(200, { role, token }, cors);
+    }
+
+    if (url.pathname === '/api/comments') {
+      const session = await sessionFromHeaders(
+        req.headers.get('cookie') || '',
+        req.headers.get('authorization') || '',
+        env.SESSION_SECRET
+      );
+      if (!session) return json(401, { error: 'Not authenticated' }, cors);
+      const role = session.r;
+      const author = clean(session.n, MAX_NAME) || (role === 'designer' ? 'Designer' : 'Client');
+      const q = (url.searchParams.get('room') || '').toLowerCase();
+      const stub = env.ROOM.getByName(ROOM_RE.test(q) ? q : '_');
+
+      if (req.method === 'GET') {
+        const data = await stub.getAll(role);
+        return json(200, { role, name: author, ...data }, cors);
+      }
+      if (req.method !== 'POST') return json(405, { error: 'Method not allowed' }, cors);
+      const body = await req.json().catch(() => ({}));
+      const { status, payload } = await stub.mutate(role, author, body);
+      return json(status, payload, cors);
+    }
+
+    if (url.pathname.startsWith('/api/')) return json(404, { error: 'Not found' }, cors);
+
+    // Built-in playground: a fake screen with the overlay attached, so the
+    // interface can be tried (and shown to reviewers) before any real PR
+    // preview carries it. Same origin — data-embed forces embed mode, and
+    // data-room keeps demo comments out of real PR rooms.
+    if (url.pathname === '/demo') {
+      return new Response(
+        `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay demo — fake screen</title>
+<style>body{font-family:system-ui,sans-serif;margin:0;color:#171717;background:#fafafa}
+header{background:#fff;border-bottom:1px solid #e5e5e5;padding:14px 28px;display:flex;gap:24px;align-items:center}
+header b{font-size:15px}header span{color:#737373;font-size:13px}
+main{max-width:720px;margin:32px auto;padding:0 24px}
+.hint{background:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;font-size:13px;color:#1e40af;margin-bottom:24px}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{margin:0 0 6px;font-size:16px}.card p{margin:0;color:#525252;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{text-align:left;padding:10px 12px;border-bottom:1px solid #f0f0f0}th{color:#737373;font-weight:500;font-size:12px}
+button.cta{background:#171717;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer}
+</style></head><body>
+<header><b>Demo Screen</b><span>a fake app page for trying the comment overlay</span></header>
+<main>
+<div class="hint">Sign in with the review password you received, then press <b>C</b> (or tap Comment) and click anywhere — on the heading, a table row, the button. Threads live in the sidebar on the right.</div>
+<div class="card"><h2>Budget Adjustments</h2><p>This card pretends to be a real component. Leave a pin on it.</p></div>
+<div class="card"><table><tr><th>Line item</th><th>Requested draw</th></tr>
+<tr><td>Foundation works</td><td>$18,500.00</td></tr>
+<tr><td>Framing</td><td>$42,300.00</td></tr>
+<tr><td>Electrical rough-in</td><td>$9,780.00</td></tr></table></div>
+<button class="cta">Submit for review</button>
+</main>
+<script src="/overlay.js" data-embed data-room="demo" defer></script>
+</body></html>`,
+        { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
+      );
+    }
+
+    // The bare host has no prototype to serve (embed-only install) — show a
+    // small status page instead of a naked 404: this URL gets clicked from
+    // Slack/PR descriptions and must not look broken.
+    if (url.pathname === '/') {
+      return new Response(
+        `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review comments service</title>
+<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:15vh auto 0;padding:0 24px;color:#171717;line-height:1.6}
+h1{font-size:20px}code{background:#f5f5f5;border-radius:4px;padding:1px 5px;font-size:13px}
+p{color:#525252}.ok{color:#16a34a;font-weight:600}</style></head><body>
+<h1>Review comments service <span class="ok">● operational</span></h1>
+<p>This service powers the design-review comment overlay on PR previews.
+There is nothing to browse here — the overlay appears on the preview pages
+themselves (press <code>C</code> to comment).</p>
+<p>It stores only comment text and commenter names, partitioned per PR.
+Endpoints: <code>/overlay.js</code>, <code>/api/login</code>, <code>/api/comments</code>.</p>
+<p>Want to try the interface? <a href="/demo">Open the demo screen</a> and sign
+in with a review password.</p>
+</body></html>`,
+        { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
+      );
+    }
+    return env.ASSETS.fetch(req);
+  },
+};

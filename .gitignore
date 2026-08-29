@@ -1,1 +1,7 @@
 .DS_Store
+node_modules/
+.env
+.env.*
+worker/wrangler.log
+test-results/
+playwright-report/

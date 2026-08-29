@@ -6,6 +6,38 @@
   const PASTELS = ['#dbffd5', '#d5edff', '#ffd4b1', '#f4d5ff', '#fff3c4', '#ffd5d5'];
   const POLL_MS = 25000;
 
+  /* ---------- embed mode ----------
+     When this script is served from a different origin than the page it runs
+     on (e.g. dropped into a client's PR preview), the page has no share-proto
+     server of its own: API and asset URLs point at the script's origin, auth
+     is a Bearer token (cross-site cookies don't survive), login happens in an
+     in-overlay modal, and comments are partitioned into a room derived from
+     the preview hostname (pr-N.<domain> → room "pr-n"). Same-origin installs
+     behave exactly as before. */
+  const SCRIPT_EL = document.currentScript;
+  const API_ORIGIN = (() => {
+    try {
+      return new URL(SCRIPT_EL.src).origin;
+    } catch {
+      return location.origin;
+    }
+  })();
+  // data-embed forces embed mode on a same-origin page (the host's own /demo);
+  // data-room pins the comment room instead of deriving it from the hostname.
+  const EMBED =
+    API_ORIGIN !== location.origin || Boolean(SCRIPT_EL && SCRIPT_EL.hasAttribute('data-embed'));
+  const ROOM = EMBED
+    ? (SCRIPT_EL && SCRIPT_EL.getAttribute('data-room')) ||
+      (location.hostname.toLowerCase().match(/^(pr-\d+)\./) || [])[1] ||
+      location.hostname.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 63)
+    : null;
+  const TOKEN_KEY = `fp_token::${API_ORIGIN}`;
+  let authToken = EMBED ? localStorage.getItem(TOKEN_KEY) : null;
+  const apiUrl = (path) =>
+    (EMBED ? API_ORIGIN : '') + path + (ROOM ? `?room=${encodeURIComponent(ROOM)}` : '');
+  const authHeaders = () =>
+    EMBED && authToken ? { Authorization: `Bearer ${authToken}` } : {};
+
   // Exact Lucide icon paths (lucide.dev, ISC) — stroke 2, viewBox 24.
   const svg = (inner) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
@@ -141,7 +173,7 @@
   const shadow = host.attachShadow({ mode: 'open' });
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = '/overlay.css';
+  link.href = (EMBED ? API_ORIGIN : '') + '/overlay.css';
   shadow.appendChild(link);
   const root = el('div', 'root');
   shadow.appendChild(root);
@@ -314,22 +346,172 @@
   }
 
   // A comment lives on the PAGE it was left on.
-  const onThisScreen = (t) => !t.screenLabel || labelsMatch(t.screenLabel, state.screen);
+  // Page check first: on multi-page prototypes two pages can share headings,
+  // and a label match alone would render the pin on the wrong page.
+  const onThisScreen = (t) =>
+    (!t.page || t.page === location.pathname) &&
+    (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
 
   /* ---------- api ---------- */
 
   async function api(method, body) {
-    const r = await fetch('/api/comments', {
+    const r = await fetch(apiUrl('/api/comments'), {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...authHeaders(),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401) {
-      location.reload();
+      if (EMBED) {
+        // Token missing/expired: ask for credentials in place — the host page
+        // is the client's preview, there is no login page to bounce to.
+        // Respect a dismissal: non-reviewers share these previews, and the
+        // poll loop lands here every cycle — it must not re-open the modal.
+        authToken = null;
+        localStorage.removeItem(TOKEN_KEY);
+        if (loginDismissed()) showPill();
+        else showLogin();
+      } else {
+        location.reload(); // same-origin: the server gate shows login.html
+      }
       throw new Error('unauthenticated');
     }
     if (!r.ok) throw new Error(`api ${r.status}`);
     return r.json();
+  }
+
+  /* ---------- embed login modal ---------- */
+
+  // Previews are shared with people who don't review designs: the modal must
+  // be dismissible (X / Esc / backdrop click), the dismissal must stick for
+  // the session, and a quiet corner pill takes its place to opt back in.
+  let loginCard = null;
+  let loginPill = null;
+  const LOGIN_DISMISS_KEY = 'fp_login_dismissed';
+
+  function loginDismissed() {
+    try {
+      return sessionStorage.getItem(LOGIN_DISMISS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function showPill() {
+    if (loginPill || loginCard || state.role) return;
+    loginPill = el('button', 'login-pill');
+    loginPill.append(icon('comment'), el('span', null, 'Review comments'));
+    loginPill.title = 'Sign in to leave design-review comments';
+    loginPill.addEventListener('click', () => {
+      try {
+        sessionStorage.removeItem(LOGIN_DISMISS_KEY);
+      } catch {}
+      showLogin();
+    });
+    root.appendChild(loginPill);
+  }
+
+  function hidePill() {
+    loginPill?.remove();
+    loginPill = null;
+  }
+
+  function dismissLogin() {
+    if (!loginCard) return;
+    loginCard.remove();
+    loginCard = null;
+    try {
+      sessionStorage.setItem(LOGIN_DISMISS_KEY, '1');
+    } catch {}
+    showPill();
+  }
+
+  function showLogin() {
+    if (loginCard) return;
+    hidePill();
+    setMode(false);
+    toolbar.style.display = 'none';
+    loginCard = el('div', 'login-wrap');
+    loginCard.addEventListener('click', (e) => {
+      if (e.target === loginCard) dismissLogin();
+    });
+    const card = el('div', 'login-card');
+    const closeBtn = el('button', 'login-close');
+    closeBtn.append(icon('close'));
+    closeBtn.title = 'Not now';
+    closeBtn.setAttribute('aria-label', 'Dismiss');
+    closeBtn.addEventListener('click', dismissLogin);
+    card.appendChild(closeBtn);
+    card.appendChild(el('div', 'login-title', 'Design review comments'));
+    card.appendChild(
+      el('div', 'login-sub', 'Enter your name and the password you received — comments you leave will be signed with your name.')
+    );
+    const nameIn = el('input', 'login-input');
+    nameIn.placeholder = 'Your name';
+    nameIn.value = localStorage.getItem('fp_name') || '';
+    const passIn = el('input', 'login-input');
+    passIn.placeholder = 'Password';
+    passIn.type = 'password';
+    const err = el('div', 'login-err');
+    const btn = el('button', 'login-btn', 'Continue');
+    const submit = async () => {
+      const name = nameIn.value.trim();
+      const password = passIn.value.trim();
+      if (!name) return err.replaceChildren('Please enter your name.');
+      if (!password) return err.replaceChildren('Please enter the password.');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      try {
+        const r = await fetch(API_ORIGIN + '/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, password }),
+        });
+        if (!r.ok) {
+          err.replaceChildren('That password didn’t work.');
+          passIn.select();
+          return;
+        }
+        const data = await r.json();
+        if (!data.token) {
+          err.replaceChildren('Server is too old for embed mode.');
+          return;
+        }
+        authToken = data.token;
+        localStorage.setItem(TOKEN_KEY, authToken);
+        localStorage.setItem('fp_name', name);
+        try {
+          sessionStorage.removeItem(LOGIN_DISMISS_KEY);
+        } catch {}
+        hidePill();
+        loginCard.remove();
+        loginCard = null;
+        toolbar.style.display = '';
+        refresh();
+      } catch {
+        err.replaceChildren('Network error — try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Continue';
+      }
+    };
+    btn.addEventListener('click', submit);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+      if (e.key === 'Escape') dismissLogin();
+    });
+    // Explicit way out for people who are just using the preview — an icon
+    // alone is easy to miss (client-team request).
+    const notNow = el('button', 'login-btn secondary', 'Not now');
+    notNow.addEventListener('click', dismissLogin);
+    const actions = el('div', 'login-actions');
+    actions.append(notNow, btn);
+    card.append(nameIn, passIn, err, actions);
+    loginCard.appendChild(card);
+    root.appendChild(loginCard);
+    (nameIn.value ? passIn : nameIn).focus();
   }
 
   let inflight = null;
@@ -627,6 +809,7 @@
             screenLabel: state.draft.screenLabel || state.screenLabel,
             anchor: state.draft.anchor,
             proto: state.proto,
+            page: location.pathname,
           });
           state.draft = null;
           draftPin?.remove();
@@ -674,7 +857,7 @@
     linkBtn.title = 'Copy link to comment';
     linkBtn.setAttribute('aria-label', 'Copy link to comment');
     linkBtn.addEventListener('click', async () => {
-      const url = `${location.origin}/?comment=${t.id}`;
+      const url = `${location.origin}${t.page || '/'}?comment=${t.id}`;
       try {
         await navigator.clipboard.writeText(url);
         toast('Link copied');
@@ -993,6 +1176,14 @@
   // must not kill the trip — ban it and route around from wherever we are.
   async function autoNavigate(t) {
     if (navigating) return;
+    // Multi-page prototypes: the thread remembers its page — navigate there
+    // directly; the deep-link boot on that page finishes the jump. Click
+    // replay can't cross documents, so this is the only route that works.
+    if (t.page && t.page !== location.pathname) {
+      toastSticky('Taking you to the comment…');
+      location.href = `${t.page}?comment=${t.id}`;
+      return;
+    }
     navigating = true;
     toastSticky('Taking you to the comment…');
     const target = graphTarget(t.screenLabel);
@@ -1204,7 +1395,16 @@
     const foot = el('div', 'sb-foot');
     foot.appendChild(el('span', 'me', `Signed in as ${myLabel()} · ${roleLabel()}`));
     const out = el('a', null, 'Sign out');
-    out.href = '/api/logout';
+    if (EMBED) {
+      out.href = '#';
+      out.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem(TOKEN_KEY);
+        location.reload();
+      });
+    } else {
+      out.href = '/api/logout';
+    }
     foot.appendChild(out);
     sidebar.appendChild(foot);
   }
@@ -1336,7 +1536,10 @@
   let staleNotified = false;
   async function checkOverlayVersion() {
     try {
-      const r = await fetch('/overlay.js', { method: 'HEAD', cache: 'no-store' });
+      const r = await fetch((EMBED ? API_ORIGIN : '') + '/overlay.js', {
+        method: 'HEAD',
+        cache: 'no-store',
+      });
       const tag = r.headers.get('etag');
       if (!tag) return;
       if (overlayEtag === null) overlayEtag = tag;
