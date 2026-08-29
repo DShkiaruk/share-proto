@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
-  assignNumbers, nextNumber, sanitizeTrail,
+  assignNumbers, nextNumber, sanitizeTrail, applyPreview,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -148,4 +148,24 @@ test('applyCreate numbers the new thread and repairs a racing duplicate', () => 
   const base = [{ id: 'a', createdAt: 1, n: 1, messages: [] }];
   const out = applyCreate(base, { id: 'b', createdAt: 2, n: 1, messages: [] });
   assert.deepEqual(out.map((t) => [t.id, t.n]), [['a', 1], ['b', 2]]);
+});
+
+test('assemble carries message images and the latest preview', () => {
+  const f = first(T, 1);
+  const [t] = assemble([
+    { ...f, data: { ...f.data, img: ['attach/a/1.jpg'] } },
+    ev(T, 2, { type: 'state', at: 2, preview: 'previews/a/2.jpg' }),
+    ev(T, 3, { type: 'state', at: 3, preview: 'previews/a/3.jpg' }),
+    ev(T, 4, { type: 'state', at: 4, resolved: true }),
+  ]);
+  assert.deepEqual(t.messages[0].img, ['attach/a/1.jpg']);
+  assert.equal(t.preview, 'previews/a/3.jpg');
+  assert.equal(t.resolved, true); // a preview-only state event does not touch resolved
+});
+
+test('applyPreview sets the thread preview without touching other threads', () => {
+  const base = [{ id: 'a', preview: null }, { id: 'b', preview: null }];
+  const out = applyPreview(base, 'a', 'previews/a/9.jpg');
+  assert.equal(out[0].preview, 'previews/a/9.jpg');
+  assert.equal(out[1].preview, null);
 });

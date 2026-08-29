@@ -78,7 +78,15 @@ export function assemble(events, root = '') {
     const firstMsg = msgs.find((m) => m.first);
     if (!firstMsg) continue;
     const states = evs.filter((e) => e.data.type === 'state');
-    const messages = msgs.map((m) => ({ author: m.author, role: m.role, text: m.text, at: m.at }));
+    const resolvedStates = states.filter((e) => 'resolved' in e.data);
+    const previews = states.filter((e) => typeof e.data.preview === 'string');
+    const messages = msgs.map((m) => ({
+      author: m.author,
+      role: m.role,
+      text: m.text,
+      at: m.at,
+      ...(Array.isArray(m.img) && m.img.length ? { img: m.img.slice(0, 3) } : {}),
+    }));
     for (const e of evs.filter((x) => x.data.type === 'edit')) {
       const m = messages.find((x) => x.at === e.data.target);
       if (m) {
@@ -99,8 +107,10 @@ export function assemble(events, root = '') {
       n: Number.isInteger(firstMsg.first.n) ? firstMsg.first.n : null,
       trail: sanitizeTrail(firstMsg.first.trail),
       // v1 read `.resolved` off the {pathname, data} wrapper → always false after a
-      // rebuild from events; the state lives on `.data`.
-      resolved: states.length ? Boolean(states.at(-1).data.resolved) : false,
+      // rebuild from events; the state lives on `.data`. State events carry one
+      // concern each (resolved | preview), so filter by field, not by type.
+      resolved: resolvedStates.length ? Boolean(resolvedStates.at(-1).data.resolved) : false,
+      preview: previews.length ? previews.at(-1).data.preview : null,
       messages,
     });
   }
@@ -129,6 +139,9 @@ export const applyResolve = (threads, tid, resolved) =>
   threads.map((t) => (t.id === tid ? { ...t, resolved } : t));
 
 export const applyDelete = (threads, tid) => threads.filter((t) => t.id !== tid);
+
+export const applyPreview = (threads, tid, preview) =>
+  threads.map((t) => (t.id === tid ? { ...t, preview } : t));
 
 export function navPatch(nav, from, to, anchor, at, cap = 500) {
   const next = { ...nav, [`${from}>${to}`]: { anchor, at } };
