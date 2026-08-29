@@ -161,6 +161,15 @@ bash <skill-dir>/scripts/smoke.sh https://<real-domain> "$PASS_TEAM" "$PASS_CLIE
 
 It checks the login gate, both roles, 401s, that a designer thread is invisible to the client, and the private file proxy. It creates one thread and deletes it. Do not continue to the hand-over until it prints `ALL OK`.
 
+### 6b. Build the map (optional, ~1–3 min)
+
+```bash
+cd <skill-dir> && npm install --silent   # once: Playwright for the crawler
+node <skill-dir>/scripts/crawl.mjs https://<real-domain> --password "$PASS_TEAM"
+```
+
+It walks the prototype breadth-first with real clicks — the overlay learns the screen graph from them — and takes a shot of every screen; reviewers then press **M** for the map. It never presses controls whose text matches delete/remove/reset/sign out/log out/clear/discard, and every branch starts from a fresh load. Skip it for prototypes with other destructive buttons, or run with `--max-screens 10` first.
+
 ### 7. Hand over — REQUIRED output format
 
 End your final message with this standout block (translated to the user's language). The link and both passwords are MANDATORY and must be visually prominent — never bury them in prose:
@@ -175,7 +184,7 @@ End your final message with this standout block (translated to the user's langua
 
 Then briefly, in prose:
 
-- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back). Each comment keeps a picture of the screen it was left on (hover a thread in the sidebar to see it); reviewers can paste, drop or attach screenshots to any message. Threads have a status — Open, In progress, Done, Won’t do (with a short reason the client sees) — a kind (bug / question / idea), and reactions; the Threads button shows what changed since your last visit, and the Versions panel lists every build the prototype has had.
+- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back). Each comment keeps a picture of the screen it was left on (hover a thread in the sidebar to see it); reviewers can paste, drop or attach screenshots to any message. Threads have a status — Open, In progress, Done, Won’t do (with a short reason the client sees) — a kind (bug / question / idea), and reactions; the Threads button shows what changed since your last visit, and the Versions panel lists every build the prototype has had. **M** opens a map of every screen — thumbnails, the clicks that connect them, comment counts — click a screen to jump there.
 - Roles: designers see all comments; the client sees only client comments (server-enforced).
 - To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
 - If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.

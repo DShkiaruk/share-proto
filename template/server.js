@@ -31,7 +31,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
 const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyResolve, applyKind, applyReact, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
-const { applyVersionEvent } = await import('./lib/state.js');
+const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -104,11 +104,13 @@ try {
 for (const room of Object.values(store.rooms)) {
   room.threads = assignNumbers(room.threads || []).map((t) => ({ status: t.resolved ? 'done' : 'open', history: [], kind: null, ...t }));
   room.versions ||= [];
+  room.shots ||= {};
+  room.mapmeta ||= { aliases: {}, hidden: [] };
 }
 
 function roomStore(room) {
   const key = room || '_';
-  return (store.rooms[key] ||= { threads: [], nav: {}, versions: [] });
+  return (store.rooms[key] ||= { threads: [], nav: {}, versions: [], shots: {}, mapmeta: { aliases: {}, hidden: [] } });
 }
 
 let writeChain = Promise.resolve();
@@ -243,6 +245,8 @@ async function apiComments(req, res, session) {
       nav,
       navAt,
       versions: S.versions || [],
+      shots: S.shots || {},
+      mapmeta: S.mapmeta || { aliases: {}, hidden: [] },
       threads: S.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -304,6 +308,29 @@ async function apiComments(req, res, session) {
     return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
   }
 
+  if (action === 'shot') {
+    if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    const label = clean(body.label, 120);
+    const img = parseImageDataUrl(body.image);
+    if (!label || !img) return json(res, 400, { error: 'Bad shot' });
+    const rel = `shots/${labelKey(label)}/${String(now).padStart(14, '0')}.${img.ext}`;
+    await putFileLocal(room, rel, img.buf);
+    S.shots = applyShot(S.shots, { label, path: rel });
+    await persist();
+    return json(res, 200, { path: rel });
+  }
+  if (action === 'mapmeta') {
+    if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    const ev = { at: now };
+    if (body.alias && typeof body.alias === 'object') ev.alias = { label: clean(body.alias.label, 120), name: clean(body.alias.name, 60) };
+    if (typeof body.hide === 'string') ev.hide = clean(body.hide, 120);
+    if (typeof body.show === 'string') ev.show = clean(body.show, 120);
+    if (!ev.alias?.label && !ev.hide && !ev.show) return json(res, 400, { error: 'Nothing to change' });
+    S.mapmeta = applyMapMeta(S.mapmeta, ev);
+    await persist();
+    return json(res, 200, { mapmeta: S.mapmeta });
+  }
+
   if (action === 'version' || action === 'version-label') {
     const id = String(body.id || '');
     if (!/^[A-Za-z0-9"/_.:-]{1,80}$/.test(id)) return json(res, 400, { error: 'Bad version id' });
@@ -333,6 +360,7 @@ async function apiComments(req, res, session) {
     const rel = `previews/${tid}/${String(now).padStart(14, '0')}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     thread.preview = rel;
+    if (thread.screenLabel && !(S.shots || {})[thread.screenLabel]) S.shots = applyShot(S.shots, { label: thread.screenLabel, path: rel });
     await persist();
     return json(res, 200, { preview: rel });
   }

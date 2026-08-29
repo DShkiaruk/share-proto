@@ -4,7 +4,7 @@ import {
 } from '../lib/threads.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
-import { createStateStore, applyVersionEvent } from '../lib/state.js';
+import { createStateStore, applyVersionEvent, applyShot, applyMapMeta, labelKey } from '../lib/state.js';
 import { sessionFromHeaders } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
@@ -57,6 +57,8 @@ export default async function handler(req, res) {
       nav: publicNav(state.nav),
       navAt: Object.fromEntries(Object.entries(state.nav).map(([k, v]) => [k, v.at])),
       versions: state.versions || [],
+      shots: state.shots || {},
+      mapmeta: state.mapmeta || { aliases: {}, hidden: [] },
       threads: state.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -142,6 +144,32 @@ export default async function handler(req, res) {
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
   }
 
+  // Map: screen shots and designer metadata carry no thread.
+  if (action === 'shot') {
+    if (role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const label = clean(body.label, 120);
+    const img = parseImageDataUrl(body.image);
+    if (!label || !img) return res.status(400).json({ error: 'Bad shot' });
+    const rel = `shots/${labelKey(label)}/${ts(now)}.${img.ext}`;
+    await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
+    await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now });
+    const { path } = await store.mutate(root, (s) => ({ shots: applyShot(s.shots, { label, path: rel }) }));
+    res.setHeader('X-Store-Path', path);
+    return res.status(200).json({ path: rel });
+  }
+  if (action === 'mapmeta') {
+    if (role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const ev = { at: now };
+    if (body.alias && typeof body.alias === 'object') ev.alias = { label: clean(body.alias.label, 120), name: clean(body.alias.name, 60) };
+    if (typeof body.hide === 'string') ev.hide = clean(body.hide, 120);
+    if (typeof body.show === 'string') ev.show = clean(body.show, 120);
+    if (!ev.alias?.label && !ev.hide && !ev.show) return res.status(400).json({ error: 'Nothing to change' });
+    await storage.appendEvent(`${root}mapmeta/${ts(now)}-${uuid()}.json`, ev);
+    const { state, path } = await store.mutate(root, (s) => ({ mapmeta: applyMapMeta(s.mapmeta, ev) }));
+    res.setHeader('X-Store-Path', path);
+    return res.status(200).json({ mapmeta: state.mapmeta });
+  }
+
   // Prototype versions carry no thread.
   const VERSION_ID = /^[A-Za-z0-9"/_.:-]{1,80}$/;
   if (action === 'version' || action === 'version-label') {
@@ -174,7 +202,15 @@ export default async function handler(req, res) {
     const rel = `previews/${tid}/${ts(now)}.${img.ext}`;
     await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
     await storage.appendEvent(eventPath(tid), { type: 'state', at: now, preview: rel });
-    const { path } = await store.mutate(root, (s) => ({ threads: applyPreview(s.threads, tid, rel) }));
+    // A screen with no map shot yet borrows this preview.
+    const label = existing.screenLabel;
+    if (label && !(cur.shots || {})[label]) {
+      await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now, from: 'preview' });
+    }
+    const { path } = await store.mutate(root, (s) => ({
+      threads: applyPreview(s.threads, tid, rel),
+      shots: label && !(s.shots || {})[label] ? applyShot(s.shots, { label, path: rel }) : s.shots,
+    }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ preview: rel });
   }

@@ -9,7 +9,31 @@ import { assemble, navPatch } from './threads.js';
    when there was no document. Nothing here overwrites a document it has not
    seen, so two racing writers can never silently erase each other's work. */
 
-export const emptyState = () => ({ v: 2, threads: [], nav: {}, versions: [], maxN: 0, updatedAt: 0 });
+export const emptyState = () => ({
+  v: 2, threads: [], nav: {}, versions: [], shots: {}, mapmeta: { aliases: {}, hidden: [] }, maxN: 0, updatedAt: 0,
+});
+
+// Screen shots for the map are filed under a URL-safe key of the label.
+export const labelKey = (label) =>
+  Buffer.from(String(label), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 80) || '_';
+
+// shotlog/<ts>-<uuid>.json {label, path, at}: latest path per label wins.
+export const applyShot = (shots, ev) =>
+  ev && typeof ev.label === 'string' && typeof ev.path === 'string' ? { ...(shots || {}), [ev.label]: ev.path } : shots || {};
+
+// mapmeta/<ts>-<uuid>.json {alias?: {label, name}, hide?: label, show?: label, at}
+export function applyMapMeta(meta, ev) {
+  const m = { aliases: { ...(meta?.aliases || {}) }, hidden: [...(meta?.hidden || [])] };
+  if (!ev) return m;
+  if (ev.alias && typeof ev.alias.label === 'string') {
+    const name = String(ev.alias.name || '').trim().slice(0, 60);
+    if (name) m.aliases[ev.alias.label] = name;
+    else delete m.aliases[ev.alias.label];
+  }
+  if (typeof ev.hide === 'string' && !m.hidden.includes(ev.hide)) m.hidden.push(ev.hide);
+  if (typeof ev.show === 'string') m.hidden = m.hidden.filter((l) => l !== ev.show);
+  return m;
+}
 
 // versions/<ts>-<uuid>.json events: {id, at} registers a build the first time
 // it is seen; {id, label, at} names it. Pure fold used by rebuild and patches.
@@ -38,11 +62,18 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
     storage.writeJson(doc(root), next, etag ? { ifMatch: etag } : { ifAbsent: true });
 
   async function rebuild(root) {
-    const [threadEvents, navEvents, versionEvents] = await Promise.all([
+    const [threadEvents, navEvents, versionEvents, shotEvents, metaEvents] = await Promise.all([
       storage.readEvents(`${root}threads/`),
       storage.readEvents(`${root}nav/`),
       storage.readEvents(`${root}versions/`),
+      storage.readEvents(`${root}shotlog/`),
+      storage.readEvents(`${root}mapmeta/`),
     ]);
+    const byAt = (list) => list.filter((b) => b.data).sort((a, b) => a.data.at - b.data.at).map((b) => b.data);
+    let shots = {};
+    for (const e of byAt(shotEvents)) shots = applyShot(shots, e);
+    let mapmeta = applyMapMeta(undefined, null);
+    for (const e of byAt(metaEvents)) mapmeta = applyMapMeta(mapmeta, e);
     const threads = assemble(threadEvents, root);
     let versions = [];
     // Builds referenced by threads (incl. pre-Phase-3 `v<hash>` ids) are versions
@@ -60,7 +91,7 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
     let nav = {};
     for (const e of edges) nav = navPatch(nav, e.from, e.to, e.anchor, e.at, navCap);
     const maxN = Math.max(0, ...threads.map((t) => t.n || 0));
-    return { ...emptyState(), threads, nav, versions, maxN, updatedAt: Date.now() };
+    return { ...emptyState(), threads, nav, versions, shots, mapmeta, maxN, updatedAt: Date.now() };
   }
 
   // Read the document; rebuild it from events when missing or corrupt.

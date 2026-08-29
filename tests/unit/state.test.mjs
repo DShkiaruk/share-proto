@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStateStore, isValidState } from '../../template/lib/state.js';
+import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta } from '../../template/lib/state.js';
 import { applyCreate } from '../../template/lib/threads.js';
 import { normalizeEtag } from '../../template/lib/storage.js';
 
@@ -139,4 +139,36 @@ test('normalizeEtag strips the weak-validator prefix and keeps strong tags intac
   assert.equal(normalizeEtag('W/"abc"'), '"abc"');
   assert.equal(normalizeEtag('"abc"'), '"abc"');
   assert.equal(normalizeEtag(undefined), null);
+});
+
+test('labelKey is URL-safe, bounded and stable', () => {
+  const k = labelKey('Dashboard · Platform Pulse');
+  assert.match(k, /^[A-Za-z0-9_-]{1,80}$/);
+  assert.equal(k, labelKey('Dashboard · Platform Pulse'));
+  assert.equal(labelKey('x'.repeat(500)).length, 80);
+  assert.equal(labelKey(''), '_');
+});
+
+test('applyShot keeps the latest path per label; applyMapMeta folds alias/hide/show', () => {
+  let shots = applyShot({}, { label: 'Home', path: 'shots/a/1.jpg' });
+  shots = applyShot(shots, { label: 'Home', path: 'shots/a/2.jpg' });
+  assert.deepEqual(shots, { Home: 'shots/a/2.jpg' });
+  let meta = applyMapMeta(undefined, { alias: { label: 'Home', name: 'Start' } });
+  meta = applyMapMeta(meta, { hide: 'Debug' });
+  meta = applyMapMeta(meta, { hide: 'Debug' });
+  assert.deepEqual(meta, { aliases: { Home: 'Start' }, hidden: ['Debug'] });
+  assert.deepEqual(applyMapMeta(meta, { show: 'Debug' }).hidden, []);
+  assert.deepEqual(applyMapMeta(meta, { alias: { label: 'Home', name: '' } }).aliases, {});
+});
+
+test('rebuild folds shotlog and mapmeta events', async () => {
+  const st = fakeStorage({
+    events: {
+      'shotlog/1.json': { label: 'Home', path: 'shots/a/1.jpg', at: 1 },
+      'mapmeta/2.json': { alias: { label: 'Home', name: 'Start' }, at: 2 },
+    },
+  });
+  const s = await createStateStore(st).rebuild('');
+  assert.deepEqual(s.shots, { Home: 'shots/a/1.jpg' });
+  assert.deepEqual(s.mapmeta, { aliases: { Home: 'Start' }, hidden: [] });
 });

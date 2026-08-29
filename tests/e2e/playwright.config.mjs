@@ -8,6 +8,7 @@ const projects = [
   { name: 'local-place', testMatch: /place\.spec\.mjs/, use: local },
   { name: 'local-media', testMatch: /media\.spec\.mjs/, use: local, dependencies: ['local-place'] },
   { name: 'local-workflow', testMatch: /workflow\.spec\.mjs/, use: local, dependencies: ['local-media'] },
+  { name: 'local-map', testMatch: /map\.spec\.mjs/, use: local, dependencies: ['local-workflow'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({
