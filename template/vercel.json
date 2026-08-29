@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "headers": [
     {
-      "source": "/api/(.*)",
+      "source": "/api/(comments|login|logout)",
       "headers": [{ "key": "Cache-Control", "value": "no-store" }]
     },
     {
