@@ -103,6 +103,7 @@
   box-shadow: var(--shadow-md);
   font-size: 12px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: #0a0a0a; /* pastel fills stay light in both themes */
   display: grid;
   place-items: center;
@@ -144,6 +145,31 @@
   background: var(--surface);
   z-index: 20;
   animation: fp-pop 180ms var(--ease);
+}
+
+/* ghost pin: the comment sits inside a closed menu/dialog; this marks the
+   trigger that opens it */
+.pin.ghost {
+  background: var(--surface);
+  border: 1.5px dashed var(--muted-fg);
+  color: var(--muted-fg);
+  box-shadow: var(--shadow-sm);
+}
+
+.pin-stack {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--ink);
+  color: var(--primary-fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
 }
 
 /* unread indicators — Figma-style blue dots */

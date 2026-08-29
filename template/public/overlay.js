@@ -274,6 +274,57 @@
     return 'body > ' + segs.join(' > ');
   }
 
+  const CONTAINER_ROLES = /^(dialog|alertdialog|menu|listbox|tooltip|combobox|tree)$/;
+
+  function firstHeadingText(n) {
+    for (const h of n.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
+      const t = (h.innerText || '').trim();
+      if (t) return t.slice(0, 40);
+    }
+    return '';
+  }
+
+  // The overlay container (menu, dialog, popover…) that holds `target`, if any:
+  // by ARIA role, by open-state convention, or by being a floating layer that
+  // does not cover the whole viewport. Also: the element a trail trigger
+  // aria-controls. Null for ordinary page content.
+  function findContainer(target) {
+    const rootEl = appRoot();
+    const viewport = innerWidth * innerHeight;
+    for (let n = target; n && n !== rootEl && n !== document.body; n = n.parentElement) {
+      const role = n.getAttribute('role') || '';
+      const byRole =
+        CONTAINER_ROLES.test(role) || n.getAttribute('aria-modal') === 'true' || n.getAttribute('data-state') === 'open';
+      let byLayer = false;
+      if (!byRole) {
+        const cs = getComputedStyle(n);
+        if ((cs.position === 'fixed' || cs.position === 'absolute') && (parseInt(cs.zIndex, 10) || 0) >= 1) {
+          const r = n.getBoundingClientRect();
+          byLayer = r.width * r.height > 0 && r.width * r.height < 0.9 * viewport;
+        }
+      }
+      if (byRole || byLayer) return describeContainer(n, role);
+    }
+    const last = trail.at(-1);
+    if (last) {
+      const trig = locateAnchor(last.anchor).el;
+      const id = trig?.getAttribute('aria-controls');
+      const ctl = id ? document.getElementById(id) : null;
+      if (ctl && ctl.contains(target)) return describeContainer(ctl, ctl.getAttribute('role') || '');
+    }
+    return null;
+  }
+
+  function describeContainer(n, role) {
+    const name =
+      n.getAttribute('aria-label') || firstHeadingText(n) || trail.at(-1)?.txt || n.tagName.toLowerCase();
+    return {
+      path: buildPath(n),
+      role: role || (n.getAttribute('aria-modal') === 'true' ? 'dialog' : 'layer'),
+      name: name.slice(0, 60),
+    };
+  }
+
   function buildAnchor(x, y) {
     const target =
       document.elementsFromPoint(x, y).find((e) => e !== host && !host.contains(e)) ||
@@ -291,6 +342,7 @@
       oy: rect.height ? (y - rect.top) / rect.height : 0.5,
       fx: de.scrollWidth ? (x + window.scrollX) / de.scrollWidth : 0.5,
       fy: de.scrollHeight ? (y + window.scrollY) / de.scrollHeight : 0.5,
+      container: findContainer(target),
     };
   }
 
@@ -713,18 +765,28 @@
     return state.threads.filter((t) => (state.filter === 'resolved' ? t.resolved : !t.resolved));
   }
 
+  // The last trail click is the trigger that opened the commented state.
+  function triggerOf(t) {
+    const step = t.trail?.at(-1);
+    if (!step) return null;
+    const loc = locateAnchor(step.anchor);
+    return loc.el ? loc : null;
+  }
+
   function renderPins() {
     pinsLayer.replaceChildren();
     pinEls.clear();
     for (const t of visiblePins()) {
-      const p = el('button', 'pin' + (t.resolved ? ' resolved' : ''), t.author.charAt(0).toUpperCase());
+      const label = Number.isInteger(t.n) ? String(t.n) : t.author.charAt(0).toUpperCase();
+      const p = el('button', 'pin' + (t.resolved ? ' resolved' : ''), label);
       p.style.background = pastel(t.author);
       if (isUnread(t)) p.appendChild(el('span', 'pin-dot'));
       if (t.id === state.active) p.classList.add('active');
-      p.setAttribute('aria-label', `Comment by ${t.author}`);
+      p.setAttribute('aria-label', `Comment #${t.n} by ${t.author}`);
       p.addEventListener('click', (e) => {
         e.stopPropagation();
-        openThread(t.id, p);
+        if (p.classList.contains('ghost')) goTo(t); // reopen the state, then show the real pin
+        else openThread(t.id, p);
       });
       pinsLayer.appendChild(p);
       pinEls.set(t.id, p);
@@ -733,23 +795,49 @@
   }
 
   function positionPins() {
+    const ghosts = new Map(); // trigger position → [pin]
     for (const [id, p] of pinEls) {
       const t = state.threads.find((x) => x.id === id);
+      p.querySelector('.pin-stack')?.remove();
       if (!t || !onThisScreen(t)) {
         p.style.display = 'none';
         continue;
       }
-      // Right page: anchor position if the element is here, otherwise the
-      // stored approximate spot — a background comment stays on its page.
-      const pos = resolveAnchor(t.anchor) || fracPos(t.anchor);
+      // 1. real: the anchored element is here. 2. ghost: it lives in a closed
+      // container and the trigger is here. 3. hidden: container, no trigger.
+      // 4. approximate: no container → stored document fraction (v1 rule).
+      let pos = resolveAnchor(t.anchor);
+      let ghost = false;
+      if (!pos) {
+        if (t.anchor?.container) {
+          const trig = triggerOf(t);
+          pos = trig?.pos || null;
+          ghost = Boolean(pos);
+        } else {
+          pos = fracPos(t.anchor);
+        }
+      }
       if (!pos) {
         p.style.display = 'none';
         continue;
       }
+      p.classList.toggle('ghost', ghost);
+      p.style.background = ghost ? '' : pastel(t.author);
       const off = pos.x < -40 || pos.y < -40 || pos.x > innerWidth + 40 || pos.y > innerHeight + 40;
       p.style.display = off ? 'none' : '';
       p.style.left = `${pos.x}px`;
       p.style.top = `${pos.y}px`;
+      if (ghost && !off) {
+        const key = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+        if (!ghosts.has(key)) ghosts.set(key, []);
+        ghosts.get(key).push(p);
+      }
+    }
+    // Several comments behind one trigger → one ghost with a count.
+    for (const pins of ghosts.values()) {
+      if (pins.length < 2) continue;
+      pins.slice(1).forEach((x) => (x.style.display = 'none'));
+      pins[0].appendChild(el('span', 'pin-stack', String(pins.length)));
     }
     if (state.draft && draftPin) {
       draftPin.style.left = `${state.draft.x}px`;
@@ -1099,25 +1187,27 @@
   }
 
   let lastNavClick = null;
+  // In-screen click trail: what the reviewer clicked since this screen appeared
+  // (opened a menu, a dialog…). Stored on a comment so "Go to comment" can
+  // reproduce the state. Reset on screen change, keeping the click that caused it.
+  let trail = [];
+  const trailStep = (anchor) => ({ anchor, txt: anchor.txt || null });
   document.addEventListener(
     'click',
     (e) => {
+      if (!e.isTrusted) return; // our own replays must not teach the graph or the trail
       if (e.composedPath().includes(host)) return;
       const raw = e.composedPath()[0];
       if (!(raw instanceof Element)) return;
-      const target = raw.closest('button, a, [role="button"]') || raw;
+      const target =
+        raw.closest('button, a, [role="button"], [role="menuitem"], [role="tab"], [role="option"], summary, label') || raw;
       const s = (target.textContent || '').replace(/\s+/g, ' ').trim();
-      lastNavClick = {
-        at: Date.now(),
-        // Compute the label NOW: state.screen is debounce-stale during fast
-        // clicking, and a wrong `from` poisons the graph with dead edges.
-        from: screenLabel(),
-        anchor: {
-          path: buildPath(target),
-          t: target.tagName.toLowerCase(),
-          txt: s && s.length <= 60 ? s : null,
-        },
-      };
+      const anchor = { path: buildPath(target), t: target.tagName.toLowerCase(), txt: s && s.length <= 60 ? s : null };
+      // Compute the label NOW: state.screen is debounce-stale during fast
+      // clicking, and a wrong `from` poisons the graph with dead edges.
+      lastNavClick = { at: Date.now(), from: screenLabel(), anchor };
+      trail.push(trailStep(anchor));
+      if (trail.length > 8) trail.shift();
     },
     true
   );
@@ -1466,6 +1556,7 @@
       anchor,
       screen: state.screen,
       screenLabel: state.screenLabel,
+      trail: anchor.container ? trail.slice() : [],
     };
     draftPin = el('button', 'pin draft', '+');
     draftPin.style.left = `${e.clientX}px`;
@@ -1528,6 +1619,7 @@
       const prevScreen = state.screen;
       state.screen = screenLabel();
       state.screenLabel = screenLabel();
+      if (state.screen !== prevScreen) trail = lastNavClick ? [trailStep(lastNavClick.anchor)] : [];
       if (
         state.screen !== prevScreen &&
         lastNavClick &&
