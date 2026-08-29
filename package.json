@@ -1,0 +1,14 @@
+{
+  "name": "share-proto-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit/",
+    "e2e": "playwright test -c tests/e2e/playwright.config.mjs",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@vercel/blob": "2.8.0"
+  }
+}
