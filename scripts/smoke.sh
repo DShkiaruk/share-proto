@@ -9,7 +9,12 @@ fail=0
 check() { if [ "$1" = "$2" ]; then echo "  ok   $3"; else echo "  FAIL $3 (got: $1, want: $2)"; fail=1; fi; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 login() { curl -s -c "$TMP/$1.jar" -H 'Content-Type: application/json' -d '{"password":"'"$2"'","name":"smoke-'"$1"'"}' "$D/api/login"; }
-role_of() { python3 -c 'import json,sys; print(json.load(sys.stdin).get("role"))'; }
+# Non-JSON bodies (500 pages) print an empty value instead of a traceback.
+jq_() { python3 -c "import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(''); sys.exit(0)
+$1" 2>/dev/null; }
+role_of() { jq_ 'print(d.get("role",""))'; }
 
 echo "share-proto smoke → $D"
 check "$(curl -s "$D/" | grep -c 'protected prototype')" 1 "GET / without cookie shows login page"
@@ -18,12 +23,12 @@ check "$(login client "$CLIENT" | role_of)" client "client password → client"
 check "$(code -H 'Content-Type: application/json' -d '{"password":"nope","name":"x"}' "$D/api/login")" 401 "wrong password → 401"
 check "$(code "$D/api/comments")" 401 "GET /api/comments without cookie → 401"
 check "$(curl -s -b "$TMP/team.jar" "$D/" | grep -c 'overlay.js')" 1 "designer sees prototype with overlay"
-check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["role"], isinstance(d["threads"], list))')" "designer True" "designer GET /api/comments"
+check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(d.get("role"), isinstance(d.get("threads"), list))')" "designer True" "designer GET /api/comments"
 
 # Role isolation: a designer-created thread must be invisible to the client.
 TID=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke (designer)","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
-  "$D/api/comments" | python3 -c 'import json,sys; print(json.load(sys.stdin)["thread"]["id"])')
+  "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("id",""))')
 check "$(curl -s -b "$TMP/client.jar" "$D/api/comments" | grep -c "$TID")" 0 "client does not see designer thread"
 check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | grep -c "$TID")" 1 "designer sees own thread"
 REPLY='{"action":"reply","threadId":"'"$TID"'","text":"x"}'

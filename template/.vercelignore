@@ -1,0 +1,4 @@
+# Local-mode files must not reach a Vercel deployment: a root server.js makes
+# Vercel treat the project as a Node server and skips api/ + middleware.
+server.js
+data/
