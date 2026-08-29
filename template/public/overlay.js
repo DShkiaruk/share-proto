@@ -78,6 +78,9 @@
     ),
     plus: svg('<path d="M5 12h14"/><path d="M12 5v14"/>'),
     history: svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>'),
+    map: svg(
+      '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>'
+    ),
     grip: svg(
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
@@ -107,6 +110,9 @@
     navAt: {},
     versionFilter: null,
     showVersions: false,
+    shots: {},
+    mapmeta: { aliases: {}, hidden: [] },
+    map: false,
     prevVisit: 0,
     bootAt: 0,
   };
@@ -812,6 +818,8 @@
           state.nav = data.nav || {};
           state.navAt = data.navAt || {};
           state.versions = data.versions || [];
+          state.shots = data.shots || {};
+          state.mapmeta = data.mapmeta || { aliases: {}, hidden: [] };
           state.threads = data.threads;
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
@@ -821,10 +829,12 @@
               t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
             ]),
             state.versions.map((v) => [v.id, v.label]),
+            Object.keys(state.shots), state.mapmeta, Object.keys(state.nav).length,
           ]);
           if (sig !== lastSig) {
             lastSig = sig;
             renderAll();
+            if (state.map) renderMap();
           }
           // Live-update an open thread when new replies arrive — unless the
           // viewer is mid-typing a reply.
@@ -883,6 +893,11 @@
   btnThreads.setAttribute('aria-label', 'Comment threads');
   btnThreads.addEventListener('click', () => setSidebar(!state.sidebar));
 
+  const btnMap = el('button', 'tb-btn');
+  btnMap.append(icon('map'), el('span', 'tb-label', 'Map'), Object.assign(el('kbd'), { textContent: 'M' }));
+  btnMap.setAttribute('aria-label', 'Map of screens');
+  btnMap.addEventListener('click', () => toggleMap());
+
   const btnEye = el('button', 'tb-icon');
   btnEye.addEventListener('click', () => setPinsHidden(!state.pinsHidden));
 
@@ -890,7 +905,7 @@
   const grip = el('span', 'tb-grip');
   grip.append(icon('grip'));
   grip.title = 'Drag to move · double-click to reset · H hides comments · J/K next/previous';
-  toolbar.append(grip, btnMode, el('span', 'tb-divider'), btnThreads, btnEye, tbAvatar);
+  toolbar.append(grip, btnMode, el('span', 'tb-divider'), btnThreads, btnMap, btnEye, tbAvatar);
 
   /* ---------- draggable toolbar (dodge prototype's own bars) ---------- */
 
@@ -1917,36 +1932,27 @@
     return openAtState(t, my);
   }
 
-  async function autoNavigate(t, my = trip) {
-    if (navigating) return;
-    // Multi-page prototypes: the thread remembers its page — navigate there
-    // directly; the deep-link boot on that page finishes the jump. Click
-    // replay can't cross documents, so this is the only route that works.
-    if (!pageMatches(t.page)) {
-      toastSticky('Taking you to the comment…');
-      location.href = deepLinkUrl(t);
-      return;
-    }
+  // Walk the learned graph to a screen label with per-hop re-planning: bad
+  // edges are banned and routed around. When only the boot screen knows a
+  // route, teleport via reload (prototypes restart there) and let the boot
+  // code finish the trip using `jump`. Returns whether the label was reached.
+  let reloading = false;
+  async function navigateToLabel(target, my = trip, jump = null) {
+    if (navigating || reloading) return false;
     navigating = true;
-    toastSticky('Taking you to the comment…');
-    const target = graphTarget(t.screenLabel);
     const banned = new Set();
     try {
       for (let hop = 0; hop < 12; hop++) {
         const from = screenLabel();
-        if (labelsMatch(from, t.screenLabel) || labelsMatch(from, target)) break;
+        if (labelsMatch(from, target)) return true;
         const route = findRoute(from, target, banned);
         if (!route || !route.length) {
-          // No path from here — prototypes reset to the start screen on
-          // reload, so teleport via reload when a path exists from the start.
-          if (bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
-            localStorage.setItem('fp_jump', t.id);
+          if (jump && bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
+            localStorage.setItem(jump.key, jump.value);
+            reloading = true;
             location.reload();
-            return;
           }
-          clearSticky();
-          armGuided(t);
-          return;
+          return false;
         }
         const step = route[0];
         const loc = locateAnchor(step.anchor);
@@ -1956,28 +1962,47 @@
         }
         synthClick(loc.el);
         const arrived = await waitForScreen(step.to, 5000);
-        if (my !== trip) return; // a newer goTo took over
-        if (!arrived) {
-          banned.add(`${from}>${step.to}`);
-          // fall through: next iteration re-plans from the actual screen
-        }
+        if (my !== trip) return false; // a newer goTo took over
+        if (!arrived) banned.add(`${from}>${step.to}`);
       }
-      state.screen = screenLabel();
-      state.screenLabel = state.screen;
-      if (labelsMatch(state.screen, t.screenLabel) || labelsMatch(state.screen, target)) {
-        clearSticky();
-        renderPins();
-        openAtState(state.threads.find((x) => x.id === t.id) || t, my);
-      } else {
-        clearSticky();
-        armGuided(t);
-      }
+      return labelsMatch(screenLabel(), target);
     } catch {
-      clearSticky();
-      armGuided(t);
+      return false;
     } finally {
       navigating = false;
     }
+  }
+
+  async function autoNavigate(t, my = trip) {
+    if (navigating || reloading) return;
+    // Multi-page prototypes: the thread remembers its page — navigate there
+    // directly; the deep-link boot on that page finishes the jump.
+    if (!pageMatches(t.page)) {
+      toastSticky('Taking you to the comment…');
+      location.href = deepLinkUrl(t);
+      return;
+    }
+    toastSticky('Taking you to the comment…');
+    const target = graphTarget(t.screenLabel);
+    const ok = await navigateToLabel(target, my, { key: 'fp_jump', value: t.id });
+    if (my !== trip || reloading) return;
+    syncScreen();
+    clearSticky();
+    if (ok || labelsMatch(state.screen, t.screenLabel)) openAtState(state.threads.find((x) => x.id === t.id) || t, my);
+    else armGuided(t);
+  }
+
+  // Map → screen: same walk, no thread at the end.
+  async function goToScreen(label) {
+    const my = ++trip;
+    if (labelsMatch(screenLabel(), label)) return true;
+    toastSticky(`Taking you to “${label}”…`);
+    const ok = await navigateToLabel(graphTarget(label), my, { key: 'fp_jump_label', value: label });
+    if (my !== trip || reloading) return ok;
+    clearSticky();
+    syncScreen();
+    if (!ok) toast(`No known path to “${label}” — navigate there by hand`, 5000);
+    return ok;
   }
 
   /* ---------- jump to a comment ---------- */
@@ -2359,6 +2384,293 @@
     sidebar.appendChild(foot);
   }
 
+  /* ---------- map of screens (M) ---------- */
+
+  // Structure = the learned navigation graph; pictures = shots (crawler or the
+  // first preview on a screen). Layout: BFS layers from the boot screen.
+  let mapEl = null;
+  const mapView = { x: 40, y: 40, k: 1 };
+  let showHiddenNodes = false;
+  const NODE_W = 240;
+  const NODE_H = 196;
+  const COL = 320;
+  const ROW = 226;
+
+  function mapModel() {
+    const hidden = new Set(state.mapmeta?.hidden || []);
+    const alias = state.mapmeta?.aliases || {};
+    const nodes = new Set();
+    const edges = [];
+    for (const [key, anchor] of Object.entries(state.nav)) {
+      const [a, b] = key.split('>');
+      if (!a || !b || isFallbackLabel(a) || isFallbackLabel(b)) continue;
+      nodes.add(a);
+      nodes.add(b);
+      edges.push({ from: a, to: b, txt: anchor?.txt || '' });
+    }
+    for (const t of state.threads) if (t.screenLabel && !isFallbackLabel(t.screenLabel)) nodes.add(t.screenLabel);
+    for (const l of Object.keys(state.shots || {})) if (!isFallbackLabel(l)) nodes.add(l);
+    const all = [...nodes];
+    const start = bootScreen && nodes.has(bootScreen) ? bootScreen : all[0];
+    const depth = new Map(start ? [[start, 0]] : []);
+    const q = start ? [start] : [];
+    while (q.length) {
+      const c = q.shift();
+      for (const e of edges) {
+        if (e.from === c && !depth.has(e.to)) {
+          depth.set(e.to, depth.get(c) + 1);
+          q.push(e.to);
+        }
+      }
+    }
+    const maxD = Math.max(0, ...depth.values());
+    const visible = all.filter((n) => !hidden.has(n));
+    const list = visible.map((label) => ({
+      label,
+      name: alias[label] || label,
+      d: depth.has(label) ? depth.get(label) : maxD + 1,
+      shot: (state.shots || {})[label] || null,
+      open: state.threads.filter((t) => t.screenLabel === label && !t.resolved).length,
+      total: state.threads.filter((t) => t.screenLabel === label).length,
+      current: labelsMatch(label, state.screen),
+    }));
+    const cols = new Map();
+    for (const n of list.sort((a, b) => a.d - b.d || a.label.localeCompare(b.label))) {
+      if (!cols.has(n.d)) cols.set(n.d, []);
+      n.row = cols.get(n.d).length;
+      cols.get(n.d).push(n);
+      n.x = n.d * COL;
+      n.y = n.row * ROW;
+    }
+    return { nodes: list, edges: edges.filter((e) => !hidden.has(e.from) && !hidden.has(e.to)), hidden: [...hidden] };
+  }
+
+  function toggleMap() {
+    if (state.map) closeMap();
+    else openMap();
+  }
+  function closeMap() {
+    mapEl?.remove();
+    mapEl = null;
+    state.map = false;
+  }
+  function openMap() {
+    if (state.presenting) togglePresent();
+    closePopover();
+    setSidebar(false);
+    state.map = true;
+    mapEl = el('div', 'map');
+    mapEl.setAttribute('role', 'dialog');
+    mapEl.setAttribute('aria-label', 'Map of screens');
+    root.appendChild(mapEl);
+    renderMap(true);
+  }
+
+  async function postMapMeta(body) {
+    try {
+      await api('POST', { action: 'mapmeta', ...body });
+      await refresh();
+      renderMap();
+    } catch {
+      toast('Couldn’t save — try again');
+    }
+  }
+
+  function renderMap(fit = false) {
+    if (!mapEl) return;
+    const model = mapModel();
+    mapEl.replaceChildren();
+
+    const bar = el('div', 'map-toolbar');
+    bar.append(el('strong', null, 'Map'), el('span', 'map-count', `${model.nodes.length} ${model.nodes.length === 1 ? 'screen' : 'screens'}`));
+    const fitBtn = el('button', 'map-btn', 'Fit');
+    fitBtn.addEventListener('click', () => renderMap(true));
+    bar.appendChild(fitBtn);
+    if (state.role === 'designer' && model.hidden.length) {
+      const hid = el('button', 'map-btn map-hidden-toggle', `${showHiddenNodes ? 'Hide' : 'Show'} hidden (${model.hidden.length})`);
+      hid.addEventListener('click', () => {
+        showHiddenNodes = !showHiddenNodes;
+        renderMap();
+      });
+      bar.appendChild(hid);
+    }
+    const close = el('button', 'icon-btn map-close');
+    close.append(icon('close'));
+    close.setAttribute('aria-label', 'Close map');
+    close.addEventListener('click', closeMap);
+    bar.appendChild(close);
+    mapEl.appendChild(bar);
+
+    if (state.role === 'designer' && showHiddenNodes && model.hidden.length) {
+      const list = el('div', 'map-hidden');
+      list.append(el('span', null, 'Hidden:'));
+      for (const l of model.hidden) {
+        const b = el('button', null, `${state.mapmeta?.aliases?.[l] || l} — show`);
+        b.addEventListener('click', () => postMapMeta({ show: l }));
+        list.appendChild(b);
+      }
+      mapEl.appendChild(list);
+    }
+
+    const viewport = el('div', 'map-viewport');
+    const canvas = el('div', 'map-canvas');
+    viewport.appendChild(canvas);
+    mapEl.appendChild(viewport);
+
+    if (!model.nodes.length) {
+      canvas.appendChild(el('div', 'map-empty', 'No screens yet — the map fills in as people click around, or all at once with scripts/crawl.mjs.'));
+    }
+
+    const W = Math.max(0, ...model.nodes.map((n) => n.x + NODE_W));
+    const H = Math.max(0, ...model.nodes.map((n) => n.y + NODE_H));
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'map-edges');
+    svg.setAttribute('width', String(W + 40));
+    svg.setAttribute('height', String(H + 40));
+    const defs = document.createElementNS(svgNS, 'defs');
+    defs.innerHTML =
+      '<marker id="fp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>';
+    svg.appendChild(defs);
+    const byLabel = new Map(model.nodes.map((n) => [n.label, n]));
+    for (const e of model.edges) {
+      const a = byLabel.get(e.from);
+      const b = byLabel.get(e.to);
+      if (!a || !b) continue;
+      const x1 = a.x + NODE_W;
+      const y1 = a.y + NODE_H / 2 - 20;
+      const x2 = b.x;
+      const y2 = b.y + NODE_H / 2 - 20;
+      const back = x2 <= x1; // edge to an earlier layer: loop under the nodes
+      const d = back
+        ? `M${x1 - NODE_W / 2} ${a.y + NODE_H} C ${x1 - NODE_W / 2} ${a.y + NODE_H + 60}, ${x2 + NODE_W / 2} ${b.y + NODE_H + 60}, ${x2 + NODE_W / 2} ${b.y + NODE_H}`
+        : `M${x1} ${y1} C ${x1 + (x2 - x1) / 2} ${y1}, ${x1 + (x2 - x1) / 2} ${y2}, ${x2} ${y2}`;
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('class', 'map-edge');
+      path.setAttribute('d', d);
+      path.setAttribute('marker-end', 'url(#fp-arrow)');
+      svg.appendChild(path);
+      if (e.txt) {
+        const text = document.createElementNS(svgNS, 'text');
+        text.setAttribute('class', 'map-edge-label');
+        text.setAttribute('x', String(back ? (x1 + x2) / 2 : x1 + (x2 - x1) / 2));
+        text.setAttribute('y', String(back ? Math.max(a.y, b.y) + NODE_H + 52 : (y1 + y2) / 2 - 6));
+        text.setAttribute('text-anchor', 'middle');
+        text.textContent = e.txt.length > 24 ? `${e.txt.slice(0, 23)}…` : e.txt;
+        svg.appendChild(text);
+      }
+    }
+    canvas.appendChild(svg);
+
+    for (const n of model.nodes) {
+      const card = el('div', 'map-node' + (n.current ? ' current' : ''));
+      card.style.left = `${n.x}px`;
+      card.style.top = `${n.y}px`;
+      card.dataset.label = n.label;
+      const thumb = el('button', 'map-thumb');
+      thumb.setAttribute('aria-label', `Go to ${n.name}`);
+      if (n.shot) {
+        const im = el('img');
+        setImg(im, n.shot);
+        im.alt = '';
+        thumb.appendChild(im);
+      } else {
+        thumb.appendChild(el('div', 'map-placeholder', 'No shot yet'));
+      }
+      thumb.addEventListener('click', () => {
+        closeMap();
+        goToScreen(n.label);
+      });
+      const name = el('div', 'map-name', n.name);
+      name.title = n.label === n.name ? n.label : `${n.name} (${n.label})`;
+      if (state.role === 'designer') {
+        name.addEventListener('dblclick', () => {
+          const input = el('input', 'map-rename');
+          input.value = n.name === n.label ? '' : n.name;
+          input.placeholder = n.label;
+          input.maxLength = 60;
+          name.replaceWith(input);
+          input.focus();
+          let closed = false;
+          const done = () => {
+            if (closed) return;
+            closed = true;
+            const val = input.value.trim();
+            if (val === (state.mapmeta?.aliases?.[n.label] || '')) return renderMap();
+            postMapMeta({ alias: { label: n.label, name: val } });
+          };
+          input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') done();
+            if (e.key === 'Escape') {
+              closed = true;
+              renderMap();
+            }
+          });
+          input.addEventListener('blur', done);
+        });
+      }
+      const count = el('div', 'map-countline', n.total ? `${n.open} open · ${n.total} total` : 'No comments');
+      card.append(thumb, name, count);
+      if (state.role === 'designer') {
+        const hide = el('button', 'map-hide');
+        hide.append(icon('close'));
+        hide.title = 'Hide this screen from the map';
+        hide.setAttribute('aria-label', hide.title);
+        hide.addEventListener('click', (e) => {
+          e.stopPropagation();
+          postMapMeta({ hide: n.label });
+        });
+        card.appendChild(hide);
+      }
+      canvas.appendChild(card);
+    }
+
+    // Pan (drag the background) and zoom (wheel), fit on open.
+    const apply = () => (canvas.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.k})`);
+    if (fit) {
+      const vw = mapEl.clientWidth || innerWidth;
+      const vh = (mapEl.clientHeight || innerHeight) - 56;
+      mapView.k = Math.min(1, (vw - 80) / Math.max(1, W), (vh - 80) / Math.max(1, H));
+      mapView.x = Math.max(24, (vw - W * mapView.k) / 2);
+      mapView.y = Math.max(24, (vh - H * mapView.k) / 2);
+    }
+    apply();
+    let drag = null;
+    viewport.addEventListener('pointerdown', (e) => {
+      // Drag only on the background (or the edge layer) — never on a node or a button icon.
+      const t = e.target;
+      const onBackground = t === viewport || t === canvas || (t instanceof SVGElement && t.closest('.map-edges'));
+      if (!onBackground) return;
+      drag = { x: e.clientX - mapView.x, y: e.clientY - mapView.y };
+      viewport.setPointerCapture(e.pointerId);
+    });
+    viewport.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      mapView.x = e.clientX - drag.x;
+      mapView.y = e.clientY - drag.y;
+      apply();
+    });
+    const endDrag = () => (drag = null);
+    viewport.addEventListener('pointerup', endDrag);
+    viewport.addEventListener('pointercancel', endDrag);
+    viewport.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        const k = Math.min(2, Math.max(0.3, mapView.k * (e.deltaY < 0 ? 1.1 : 0.9)));
+        const r = viewport.getBoundingClientRect();
+        const px = e.clientX - r.left;
+        const py = e.clientY - r.top;
+        mapView.x = px - ((px - mapView.x) * k) / mapView.k;
+        mapView.y = py - ((py - mapView.y) * k) / mapView.k;
+        mapView.k = k;
+        apply();
+      },
+      { passive: false }
+    );
+  }
+
   /* ---------- comment mode ---------- */
 
   function setMode(on) {
@@ -2405,6 +2717,7 @@
     state.presenting = !state.presenting;
     if (state.presenting) {
       presentSaved = { sidebar: state.sidebar, active: state.active };
+      closeMap();
       closePopover();
       cancelDraft();
       if (state.mode) setMode(false);
@@ -2454,6 +2767,7 @@
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (e.key === 'Escape') {
       if (lightbox) closeLightbox();
+      else if (state.map) closeMap();
       else if (statusMenu) closeStatusMenu();
       else if (state.draft) cancelDraft();
       else if (popover) closePopover();
@@ -2466,6 +2780,7 @@
     // e.code — layout-independent (works on Cyrillic layouts too)
     if (e.code === 'KeyC') setMode(!state.mode);
     else if (e.code === 'KeyH') togglePresent();
+    else if (e.code === 'KeyM') toggleMap();
     else if (e.code === 'KeyJ' || e.code === 'BracketRight') stepThread(1);
     else if (e.code === 'KeyK' || e.code === 'BracketLeft') stepThread(-1);
   });
@@ -2643,6 +2958,11 @@
     renderPins();
     // Continue a reload-teleport or serve a deep link: replay the learned
     // route to the comment from the start screen.
+    const jumpLabel = localStorage.getItem('fp_jump_label');
+    if (jumpLabel) {
+      localStorage.removeItem('fp_jump_label');
+      setTimeout(() => goToScreen(jumpLabel), 800);
+    }
     const jump = localStorage.getItem('fp_jump') || deepLink;
     if (jump) {
       localStorage.removeItem('fp_jump');

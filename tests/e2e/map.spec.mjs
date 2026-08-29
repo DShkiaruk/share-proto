@@ -38,7 +38,7 @@ test('M opens the map; a node navigates; the designer can rename and hide', asyn
   // rename Settings → Prefs
   const settings = nodes.filter({ hasText: 'Settings' }).first();
   await settings.locator('.map-name').dblclick();
-  await settings.locator('input').fill('Prefs');
+  await inOverlay(page, '.map-rename').fill('Prefs'); // the name is replaced by the input, so the node no longer has the text
   await page.keyboard.press('Enter');
   await expect(inOverlay(page, '.map-node').filter({ hasText: 'Prefs' })).toHaveCount(1, { timeout: 10_000 });
   expect((await apiGet(page, '/api/comments')).mapmeta.aliases.Settings).toBe('Prefs');
@@ -50,13 +50,13 @@ test('M opens the map; a node navigates; the designer can rename and hide', asyn
 
   // hide Home, then show it again
   await page.keyboard.press('KeyM');
-  const home = inOverlay(page, '.map-node').filter({ hasText: 'Home' }).first();
+  const home = inOverlay(page, '.map-node[data-label="Home"]'); // "Home · Confirm" (the dialog) is a node too
   await home.hover();
   await mouseClick(page, home.locator('.map-hide'));
-  await expect(inOverlay(page, '.map-node').filter({ hasText: 'Home' })).toHaveCount(0, { timeout: 10_000 });
+  await expect(inOverlay(page, '.map-node[data-label="Home"]')).toHaveCount(0, { timeout: 10_000 });
   await mouseClick(page, inOverlay(page, '.map-toolbar .map-hidden-toggle'));
-  await mouseClick(page, inOverlay(page, '.map-hidden button').filter({ hasText: 'Home' }));
-  await expect(inOverlay(page, '.map-node').filter({ hasText: 'Home' })).toHaveCount(1, { timeout: 10_000 });
+  await mouseClick(page, inOverlay(page, '.map-hidden button').filter({ hasText: /^Home — show$/ }));
+  await expect(inOverlay(page, '.map-node[data-label="Home"]')).toHaveCount(1, { timeout: 10_000 });
   await page.keyboard.press('Escape');
   await expect(map).toHaveCount(0);
 });
