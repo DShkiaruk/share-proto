@@ -99,7 +99,7 @@ cd ~/<name>-share
 vercel link --yes --project <name>
 ```
 
-Generate: `PASS_TEAM="<name>-team-$(openssl rand -hex 2)"`, `PASS_CLIENT="<name>-client-$(openssl rand -hex 2)"`, `SECRET=$(openssl rand -hex 32)`. Then for `production` and `development` (skip `preview` — it prompts interactively and isn't needed):
+Generate: `PASS_TEAM="<name>-team-$(openssl rand -hex 4)"`, `PASS_CLIENT="<name>-client-$(openssl rand -hex 4)"`, `SECRET=$(openssl rand -hex 32)`. Never use fewer than 4 bytes: the prefix is guessable from the domain, so the random part is the whole password. Then for `production` and `development` (skip `preview` — it prompts interactively and isn't needed):
 
 ```bash
 printf '%s' "$PASS_TEAM"   | vercel env add DESIGNER_PASSWORD production
@@ -141,14 +141,13 @@ vercel project ls   # the production domain is in this output
 
 **Trap:** the domain is NOT always `<name>.vercel.app` — if the name is taken by another Vercel user you get a suffixed domain (e.g. `<name>-sigma.vercel.app`). Always take the domain from `vercel project ls` and smoke-test THAT domain, otherwise you may be testing a stranger's site.
 
-### 6. Smoke test (curl, against the real domain)
+### 6. Smoke test (against the real domain)
 
-- `GET /` without cookies → login page HTML (`protected prototype` in title)
-- `POST /api/login {"password": "$PASS_TEAM"}` → `{"role":"designer"}`; wrong password → 401
-- `POST /api/login {"password": "$PASS_CLIENT"}` → `{"role":"client"}`
-- With designer cookie: `GET /` → prototype HTML containing `overlay.js`; `GET /api/comments` → `{"role":"designer","threads":[]}`
-- `GET /api/comments` without cookie → 401
-- Optional deeper check: create a comment as client, confirm designer GET returns it and that a designer-created thread is absent from client GET. Then wipe: `vercel blob empty-store --yes`.
+```bash
+bash <skill-dir>/scripts/smoke.sh https://<real-domain> "$PASS_TEAM" "$PASS_CLIENT"
+```
+
+It checks the login gate, both roles, 401s, that a designer thread is invisible to the client, and the private file proxy. It creates one thread and deletes it. Do not continue to the hand-over until it prints `ALL OK`.
 
 ### 7. Hand over — REQUIRED output format
 
