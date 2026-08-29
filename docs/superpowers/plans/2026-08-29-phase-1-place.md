@@ -10,6 +10,18 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-share-proto-v2-design.md` — §5 (5.1–5.6), §6.1, §6.2, §6.7, §7.2; also §11 (compatibility).
 
+## Execution notes (2026-08-29)
+
+Executed on branch `v2`; all 11 tasks done, e2e 4/4 local + 3/3 lab, lab redeployed. Deviations and discoveries:
+- **Overlay pointer events are now stopped at the host** (`pointerdown/up`, `mousedown/up`, `click`, `touchstart/end`). Without this the prototype's own outside-click handlers closed a dropdown the moment the Comment button was clicked — the real reason v1 comments inside menus "fell to the background". Not in the plan; essential to Task 4/5.
+- `goTo()` routes by **hash inside the same document** (`location.hash = …`) before falling back to the learned graph — the graph rarely knows the way *back*.
+- `syncScreen()` added: the mutation observer is debounced by 250 ms, so `onThisScreen()` saw a stale label right after a hash change or a trail replay.
+- The merged local edition's `page: location.pathname` in the create payload shadowed the new `currentPage()` key (later duplicate key wins) — removed.
+- `window.__fp = { version, label, state }` read-only hook added for tests and the Phase 4 crawler.
+- Tasks 9–10 were committed together with the overlay fixes they surfaced.
+- Two timing waits in `place.spec.mjs` are deliberate and commented: a 150 ms frame settle before clicking a just-inserted element (compositor hit-testing uses the previous frame), and a `designer.reload()` before sort assertions (overlay polls every 25 s).
+- Sidebar "Newest" sorts by last activity, so the lab shows `#14 #13 #12 #10 #11` — replies move threads up. Intended.
+
 ## Global Constraints
 
 - The client role must never receive designer threads from the API — re-verify after any API change (spec §1).
