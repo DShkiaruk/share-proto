@@ -8,6 +8,21 @@
 
 export const clean = (str, max) => String(str || '').trim().slice(0, max);
 
+export const STATUSES = ['open', 'progress', 'done', 'wont'];
+export const KINDS = ['bug', 'question', 'idea'];
+export const EMOJI = ['👍', '✅', '❓', '👀'];
+export const isResolvedStatus = (status) => status === 'done' || status === 'wont';
+
+function toggleReaction(reactions, emoji, author, on) {
+  const next = { ...(reactions || {}) };
+  const set = new Set(next[emoji] || []);
+  if (on) set.add(author);
+  else set.delete(author);
+  if (set.size) next[emoji] = [...set];
+  else delete next[emoji];
+  return Object.keys(next).length ? next : undefined;
+}
+
 // A stored page is a same-origin path (+ optional hash). Anything else — a
 // scheme, a protocol-relative host, whitespace — is dropped: the overlay feeds
 // this into location.href, so it must never become a URL of its own.
@@ -87,8 +102,23 @@ export function assemble(events, root = '') {
     const firstMsg = msgs.find((m) => m.first);
     if (!firstMsg) continue;
     const states = evs.filter((e) => e.data.type === 'state');
-    const resolvedStates = states.filter((e) => 'resolved' in e.data);
     const previews = states.filter((e) => typeof e.data.preview === 'string');
+    // Status history: v2 `status` events and legacy `resolved` flags, in order.
+    const history = [];
+    for (const e of states) {
+      const explicit = typeof e.data.status === 'string' && STATUSES.includes(e.data.status);
+      if (!explicit && !('resolved' in e.data)) continue;
+      const status = explicit ? e.data.status : e.data.resolved ? 'done' : 'open';
+      history.push({
+        at: e.data.at,
+        status,
+        note: status === 'wont' ? clean(e.data.note, 200) || null : null,
+        author: e.data.author || null,
+      });
+    }
+    const status = history.length ? history.at(-1).status : 'open';
+    const kinds = states.filter((e) => typeof e.data.kind === 'string' && KINDS.includes(e.data.kind));
+    const kind = kinds.length ? kinds.at(-1).data.kind : KINDS.includes(firstMsg.first.kind) ? firstMsg.first.kind : null;
     const messages = msgs.map((m) => ({
       author: m.author,
       role: m.role,
@@ -103,6 +133,15 @@ export function assemble(events, root = '') {
         m.edited = true;
       }
     }
+    for (const e of evs.filter((x) => x.data.type === 'react')) {
+      const { target, emoji, on, author } = e.data;
+      if (!EMOJI.includes(emoji) || !author) continue;
+      const m = messages.find((x) => x.at === target);
+      if (!m) continue;
+      const reactions = toggleReaction(m.reactions, emoji, author, Boolean(on));
+      if (reactions) m.reactions = reactions;
+      else delete m.reactions;
+    }
     threads.push({
       id: tid,
       createdAt: firstMsg.at,
@@ -115,10 +154,14 @@ export function assemble(events, root = '') {
       page: firstMsg.first.page || null,
       n: Number.isInteger(firstMsg.first.n) ? firstMsg.first.n : null,
       trail: sanitizeTrail(firstMsg.first.trail),
-      // v1 read `.resolved` off the {pathname, data} wrapper → always false after a
-      // rebuild from events; the state lives on `.data`. State events carry one
-      // concern each (resolved | preview), so filter by field, not by type.
-      resolved: resolvedStates.length ? Boolean(resolvedStates.at(-1).data.resolved) : false,
+      // `resolved` is derived from the status (v1 read it off the event wrapper
+      // and lost it on every rebuild). State events carry one concern each
+      // (status | kind | preview), so they are filtered by field, not by type.
+      status,
+      statusNote: status === 'wont' ? history.at(-1).note : null,
+      kind,
+      history,
+      resolved: isResolvedStatus(status),
       preview: previews.length ? previews.at(-1).data.preview : null,
       messages,
     });
@@ -144,8 +187,40 @@ export const applyEdit = (threads, tid, target, text) =>
       : t
   );
 
-export const applyResolve = (threads, tid, resolved) =>
-  threads.map((t) => (t.id === tid ? { ...t, resolved } : t));
+export const applyStatus = (threads, tid, { status, note = null, author = null, at = Date.now() }) =>
+  threads.map((t) =>
+    t.id === tid
+      ? {
+          ...t,
+          status,
+          statusNote: status === 'wont' ? note || null : null,
+          resolved: isResolvedStatus(status),
+          history: [...(t.history || []), { at, status, note: status === 'wont' ? note || null : null, author }],
+        }
+      : t
+  );
+
+// v1 action kept for compatibility: resolve ⇔ done, reopen ⇔ open.
+export const applyResolve = (threads, tid, resolved, author = null, at = Date.now()) =>
+  applyStatus(threads, tid, { status: resolved ? 'done' : 'open', author, at });
+
+export const applyKind = (threads, tid, kind) =>
+  threads.map((t) => (t.id === tid ? { ...t, kind: KINDS.includes(kind) ? kind : null } : t));
+
+export const applyReact = (threads, tid, { target, emoji, on, author }) =>
+  threads.map((t) =>
+    t.id === tid
+      ? {
+          ...t,
+          messages: t.messages.map((m) => {
+            if (m.at !== target) return m;
+            const reactions = toggleReaction(m.reactions, emoji, author, on);
+            const { reactions: _drop, ...rest } = m;
+            return reactions ? { ...rest, reactions } : rest;
+          }),
+        }
+      : t
+  );
 
 export const applyDelete = (threads, tid) => threads.filter((t) => t.id !== tid);
 

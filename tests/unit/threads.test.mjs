@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
   assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage,
+  applyStatus, applyKind, applyReact,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -186,4 +187,44 @@ test('assignNumbers breaks createdAt ties by id so live and rebuilt documents ag
   const b = assignNumbers([{ id: 'a', createdAt: 5 }, { id: 'b', createdAt: 5 }]);
   assert.deepEqual(Object.fromEntries(a.map((t) => [t.id, t.n])), Object.fromEntries(b.map((t) => [t.id, t.n])));
   assert.equal(a.find((t) => t.id === 'a').n, 1);
+});
+
+test('assemble derives status/history from state events and keeps resolved in sync', () => {
+  const [t] = assemble([
+    first(T, 1),
+    ev(T, 2, { type: 'state', at: 2, resolved: true }), // legacy → done
+    ev(T, 3, { type: 'state', at: 3, status: 'progress', author: 'Bob', role: 'designer' }),
+    ev(T, 4, { type: 'state', at: 4, status: 'wont', note: 'Out of scope', author: 'Bob', role: 'designer' }),
+    ev(T, 5, { type: 'state', at: 5, kind: 'bug', author: 'Bob', role: 'designer' }),
+  ]);
+  assert.equal(t.status, 'wont');
+  assert.equal(t.statusNote, 'Out of scope');
+  assert.equal(t.resolved, true);
+  assert.equal(t.kind, 'bug');
+  assert.deepEqual(t.history.map((h) => [h.status, h.author]), [['done', null], ['progress', 'Bob'], ['wont', 'Bob']]);
+});
+
+test('assemble folds reactions per message; toggling off removes the author', () => {
+  const [t] = assemble([
+    first(T, 1),
+    ev(T, 2, { type: 'react', at: 2, target: 1, emoji: '👍', on: true, author: 'Bob', role: 'designer' }),
+    ev(T, 3, { type: 'react', at: 3, target: 1, emoji: '👍', on: true, author: 'Cy', role: 'client' }),
+    ev(T, 4, { type: 'react', at: 4, target: 1, emoji: '👍', on: false, author: 'Bob', role: 'designer' }),
+    ev(T, 5, { type: 'react', at: 5, target: 1, emoji: '🔥', on: true, author: 'Bob', role: 'designer' }), // not in palette → ignored
+  ]);
+  assert.deepEqual(t.messages[0].reactions, { '👍': ['Cy'] });
+});
+
+test('status helpers are pure and keep resolved derived', () => {
+  const base = [{ id: 'a', status: 'open', resolved: false, history: [], messages: [{ at: 1 }] }];
+  const done = applyStatus(base, 'a', { status: 'done', note: null, author: 'Ann', at: 9 });
+  assert.equal(done[0].resolved, true);
+  assert.equal(done[0].history.length, 1);
+  assert.equal(base[0].history.length, 0);
+  assert.equal(applyKind(base, 'a', 'idea')[0].kind, 'idea');
+  assert.equal(applyKind(base, 'a', 'nope')[0].kind, null);
+  const r = applyReact(base, 'a', { target: 1, emoji: '✅', on: true, author: 'Ann' });
+  assert.deepEqual(r[0].messages[0].reactions, { '✅': ['Ann'] });
+  assert.equal(applyReact(r, 'a', { target: 1, emoji: '✅', on: false, author: 'Ann' })[0].messages[0].reactions, undefined);
+  assert.equal(applyResolve(base, 'a', true, 'Ann', 5)[0].status, 'done');
 });
