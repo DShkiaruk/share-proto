@@ -30,7 +30,8 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage } = await import('./lib/threads.js');
+const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyResolve, applyKind, applyReact, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
+const { applyVersionEvent } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -100,11 +101,14 @@ try {
   /* first run */
 }
 // Numbers are global per room; legacy threads get theirs in createdAt order.
-for (const room of Object.values(store.rooms)) room.threads = assignNumbers(room.threads || []);
+for (const room of Object.values(store.rooms)) {
+  room.threads = assignNumbers(room.threads || []).map((t) => ({ status: t.resolved ? 'done' : 'open', history: [], kind: null, ...t }));
+  room.versions ||= [];
+}
 
 function roomStore(room) {
   const key = room || '_';
-  return (store.rooms[key] ||= { threads: [], nav: {} });
+  return (store.rooms[key] ||= { threads: [], nav: {}, versions: [] });
 }
 
 let writeChain = Promise.resolve();
@@ -229,10 +233,14 @@ async function apiComments(req, res, session) {
   if (req.method === 'GET') {
     const nav = {};
     for (const [k, v] of Object.entries(S.nav)) nav[k] = v.anchor;
+    const navAt = {};
+    for (const [k, v] of Object.entries(S.nav)) navAt[k] = v.at;
     return json(res, 200, {
       role,
       name: author,
       nav,
+      navAt,
+      versions: S.versions || [],
       threads: S.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -276,6 +284,9 @@ async function apiComments(req, res, session) {
       page: sanitizePage(body.page),
       n: Math.max(nextNumber(S.threads), (S.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
+      kind: KINDS.includes(body.kind) ? body.kind : null,
+      status: 'open',
+      history: [],
       resolved: false,
       preview: null,
       messages: [{ author, role, text, at: now }],
@@ -286,6 +297,17 @@ async function apiComments(req, res, session) {
     S.maxN = Math.max(S.maxN || 0, ...S.threads.map((t) => t.n || 0));
     await persist();
     return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
+  }
+
+  if (action === 'version' || action === 'version-label') {
+    const id = String(body.id || '');
+    if (!/^[A-Za-z0-9"/_.:-]{1,80}$/.test(id)) return json(res, 400, { error: 'Bad version id' });
+    if (action === 'version-label' && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    S.versions ||= [];
+    if (action === 'version' && S.versions.some((v) => v.id === id)) return json(res, 200, { ok: true, known: true });
+    S.versions = applyVersionEvent(S.versions, action === 'version' ? { id, at: now } : { id, label: clean(body.label, 60), at: now });
+    await persist();
+    return json(res, 200, { ok: true, versions: S.versions });
   }
 
   const tid = String(body.threadId || '');
@@ -323,7 +345,22 @@ async function apiComments(req, res, session) {
     msg.text = text;
     msg.edited = true;
   } else if (action === 'resolve') {
-    thread.resolved = Boolean(body.resolved);
+    S.threads = applyResolve(S.threads, tid, Boolean(body.resolved), author, now);
+  } else if (action === 'status') {
+    const status = String(body.status || '');
+    if (!STATUSES.includes(status)) return json(res, 400, { error: 'Bad status' });
+    if ((status === 'progress' || status === 'wont') && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    const note = clean(body.note, 200);
+    if (status === 'wont' && !note) return json(res, 400, { error: 'Reason required' });
+    S.threads = applyStatus(S.threads, tid, { status, note, author, at: now });
+  } else if (action === 'kind') {
+    if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    S.threads = applyKind(S.threads, tid, KINDS.includes(body.kind) ? body.kind : null);
+  } else if (action === 'react') {
+    const emoji = String(body.emoji || '');
+    const target = Number(body.at);
+    if (!EMOJI.includes(emoji) || !thread.messages.some((m) => m.at === target)) return json(res, 400, { error: 'Bad reaction' });
+    S.threads = applyReact(S.threads, tid, { target, emoji, on: Boolean(body.on), author });
   } else if (action === 'delete') {
     const own = thread.authorRole === role && thread.author === author;
     if (role !== 'designer' && !own) return json(res, 403, { error: 'Not allowed' });
@@ -335,7 +372,7 @@ async function apiComments(req, res, session) {
   }
 
   await persist();
-  return json(res, 200, { thread });
+  return json(res, 200, { thread: S.threads.find((t) => t.id === tid) });
 }
 
 /* ---------- static files ---------- */

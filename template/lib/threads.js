@@ -117,8 +117,10 @@ export function assemble(events, root = '') {
       });
     }
     const status = history.length ? history.at(-1).status : 'open';
-    const kinds = states.filter((e) => typeof e.data.kind === 'string' && KINDS.includes(e.data.kind));
-    const kind = kinds.length ? kinds.at(-1).data.kind : KINDS.includes(firstMsg.first.kind) ? firstMsg.first.kind : null;
+    // kind events: one of KINDS, or 'none' to clear.
+    const kinds = states.filter((e) => typeof e.data.kind === 'string' && (KINDS.includes(e.data.kind) || e.data.kind === 'none'));
+    const lastKind = kinds.length ? kinds.at(-1).data.kind : firstMsg.first.kind;
+    const kind = KINDS.includes(lastKind) ? lastKind : null;
     const messages = msgs.map((m) => ({
       author: m.author,
       role: m.role,

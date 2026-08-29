@@ -9,7 +9,21 @@ import { assemble, navPatch } from './threads.js';
    when there was no document. Nothing here overwrites a document it has not
    seen, so two racing writers can never silently erase each other's work. */
 
-export const emptyState = () => ({ v: 2, threads: [], nav: {}, maxN: 0, updatedAt: 0 });
+export const emptyState = () => ({ v: 2, threads: [], nav: {}, versions: [], maxN: 0, updatedAt: 0 });
+
+// versions/<ts>-<uuid>.json events: {id, at} registers a build the first time
+// it is seen; {id, label, at} names it. Pure fold used by rebuild and patches.
+export function applyVersionEvent(versions, ev) {
+  if (!ev || typeof ev.id !== 'string') return versions || [];
+  const list = (versions || []).slice();
+  let v = list.find((x) => x.id === ev.id);
+  if (!v) {
+    v = { id: ev.id, firstSeen: ev.at, label: null };
+    list.push(v);
+  }
+  if (typeof ev.label === 'string') list[list.indexOf(v)] = { ...v, label: ev.label.slice(0, 60) || null };
+  return list.sort((a, b) => a.firstSeen - b.firstSeen);
+}
 
 export const isValidState = (d) =>
   Boolean(d && d.v === 2 && Array.isArray(d.threads) && d.nav && typeof d.nav === 'object');
@@ -21,10 +35,15 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
     storage.writeJson(doc(root), next, etag ? { ifMatch: etag } : { ifAbsent: true });
 
   async function rebuild(root) {
-    const [threadEvents, navEvents] = await Promise.all([
+    const [threadEvents, navEvents, versionEvents] = await Promise.all([
       storage.readEvents(`${root}threads/`),
       storage.readEvents(`${root}nav/`),
+      storage.readEvents(`${root}versions/`),
     ]);
+    let versions = [];
+    for (const { data: e } of versionEvents.filter((b) => b.data).sort((a, b) => a.data.at - b.data.at)) {
+      versions = applyVersionEvent(versions, e);
+    }
     const threads = assemble(threadEvents, root);
     const edges = navEvents
       .map((b) => b.data)
@@ -33,7 +52,7 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
     let nav = {};
     for (const e of edges) nav = navPatch(nav, e.from, e.to, e.anchor, e.at, navCap);
     const maxN = Math.max(0, ...threads.map((t) => t.n || 0));
-    return { ...emptyState(), threads, nav, maxN, updatedAt: Date.now() };
+    return { ...emptyState(), threads, nav, versions, maxN, updatedAt: Date.now() };
   }
 
   // Read the document; rebuild it from events when missing or corrupt.

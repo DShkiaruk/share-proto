@@ -1,10 +1,10 @@
 import {
   clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, sanitizeTrail, sanitizePage,
+  nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyKind, applyReact, STATUSES, KINDS, EMOJI,
 } from '../lib/threads.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
-import { createStateStore } from '../lib/state.js';
+import { createStateStore, applyVersionEvent } from '../lib/state.js';
 import { sessionFromHeaders } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
@@ -55,6 +55,8 @@ export default async function handler(req, res) {
       role,
       name: author,
       nav: publicNav(state.nav),
+      navAt: Object.fromEntries(Object.entries(state.nav).map(([k, v]) => [k, v.at])),
+      versions: state.versions || [],
       threads: state.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -112,6 +114,7 @@ export default async function handler(req, res) {
       // Never reuse a number: max over live threads AND the document's high-water mark.
       n: Math.max(nextNumber(before.threads), (before.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
+      kind: KINDS.includes(body.kind) ? body.kind : null,
     };
     const img = await storeImages(tid, 'attach', body.images);
     const firstMsg = { author, role, text, at: now, ...(img.length ? { img } : {}) };
@@ -131,6 +134,23 @@ export default async function handler(req, res) {
     });
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
+  }
+
+  // Prototype versions carry no thread.
+  const VERSION_ID = /^[A-Za-z0-9"/_.:-]{1,80}$/;
+  if (action === 'version' || action === 'version-label') {
+    const id = String(body.id || '');
+    if (!VERSION_ID.test(id)) return res.status(400).json({ error: 'Bad version id' });
+    if (action === 'version-label' && role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const ev = action === 'version' ? { id, at: now } : { id, label: clean(body.label, 60), at: now };
+    const { state: cur } = await store.loadState(root);
+    if (action === 'version' && (cur.versions || []).some((v) => v.id === id)) {
+      return res.status(200).json({ ok: true, known: true });
+    }
+    await storage.appendEvent(`${root}versions/${ts(now)}-${uuid()}.json`, ev);
+    const { state, path } = await store.mutate(root, (s) => ({ versions: applyVersionEvent(s.versions, ev) }));
+    res.setHeader('X-Store-Path', path);
+    return res.status(200).json({ ok: true, versions: state.versions });
   }
 
   const tid = String(body.threadId || '');
@@ -171,9 +191,36 @@ export default async function handler(req, res) {
     await storage.appendEvent(eventPath(tid), { type: 'edit', at: now, target, text });
     patch = (s) => ({ threads: applyEdit(s.threads, tid, target, text) });
   } else if (action === 'resolve') {
+    // v1 action: resolve ⇔ done, reopen ⇔ open (kept for old overlays).
     const resolved = Boolean(body.resolved);
-    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, resolved });
-    patch = (s) => ({ threads: applyResolve(s.threads, tid, resolved) });
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, status: resolved ? 'done' : 'open', author, role });
+    patch = (s) => ({ threads: applyResolve(s.threads, tid, resolved, author, now) });
+  } else if (action === 'status') {
+    const status = String(body.status || '');
+    if (!STATUSES.includes(status)) return res.status(400).json({ error: 'Bad status' });
+    if ((status === 'progress' || status === 'wont') && role !== 'designer') {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+    const note = clean(body.note, 200);
+    if (status === 'wont' && !note) return res.status(400).json({ error: 'Reason required' });
+    await storage.appendEvent(eventPath(tid), {
+      type: 'state', at: now, status, ...(status === 'wont' ? { note } : {}), author, role,
+    });
+    patch = (s) => ({ threads: applyStatus(s.threads, tid, { status, note, author, at: now }) });
+  } else if (action === 'kind') {
+    if (role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const kind = KINDS.includes(body.kind) ? body.kind : null;
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, kind: kind || 'none', author, role });
+    patch = (s) => ({ threads: applyKind(s.threads, tid, kind) });
+  } else if (action === 'react') {
+    const emoji = String(body.emoji || '');
+    const target = Number(body.at);
+    const on = Boolean(body.on);
+    if (!EMOJI.includes(emoji) || !existing.messages.some((m) => m.at === target)) {
+      return res.status(400).json({ error: 'Bad reaction' });
+    }
+    await storage.appendEvent(eventPath(tid), { type: 'react', at: now, target, emoji, on, author, role });
+    patch = (s) => ({ threads: applyReact(s.threads, tid, { target, emoji, on, author }) });
   } else if (action === 'delete') {
     const own = existing.authorRole === role && existing.author === author;
     if (role !== 'designer' && !own) return res.status(403).json({ error: 'Not allowed' });
