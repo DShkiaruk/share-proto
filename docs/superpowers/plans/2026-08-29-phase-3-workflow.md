@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-share-proto-v2-design.md` — §6.3, §6.4, §6.5, §6.6, §6.8, §6.1 (status filter), §7.3.
 
+## Execution notes (2026-08-29)
+
+All 5 tasks done; local e2e 12/12 (place 4, media 3, workflow 5) on the first run, lab redeployed. Deviations:
+- Kind is cleared with a `kind: 'none'` state event (a JSON `null` would be indistinguishable from "no kind event").
+- The Versions panel refreshes state when opened (labels set from another tab are otherwise 25 s stale); version ids are the served page's ETag with `W/` and quotes stripped, falling back to the v1 djb2 hash.
+- "New for you" replaces the top of the list for 60 s after boot and pushes the rest under "Everything else"; `place.spec`'s oldest-sort assertion now skips `.new` rows.
+- The v1 `resolve` action is kept and mapped to `status` events with author, so old overlays keep working against the new API.
+
 ## Global Constraints
 
 - Client role never receives designer threads (GET filter unchanged); a client may only set `open ↔ done` on threads they can see; `progress`, `wont`, kind changes, version labels are designer-only, server-enforced (spec §6.3, §6.4, §6.8).
