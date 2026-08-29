@@ -223,18 +223,30 @@
     root.classList.toggle('dark', lum < 128);
   }
 
+  // Screen identity, in order of trust: an explicit [data-screen] tag on the
+  // app root (or its first child) → the first two distinct visible headings →
+  // the hash route → the first short visible sub-heading-ish text → the title.
+  // Only the title is a "fallback label" (never learns graph edges).
   function screenLabel() {
-    // Composite of the first two distinct headings: single-page apps often
-    // keep one constant h1 across tabs — the second heading tells tabs apart.
+    const rootEl = appRoot();
+    const tagged =
+      rootEl.getAttribute?.('data-screen') || rootEl.firstElementChild?.getAttribute?.('data-screen');
+    if (tagged && tagged.trim()) return tagged.trim().slice(0, 80);
     const parts = [];
-    for (const hd of appRoot().querySelectorAll('h1, h2, h3')) {
+    for (const hd of rootEl.querySelectorAll('h1, h2, h3')) {
       const t = (hd.innerText || '').trim().slice(0, 40);
       if (t && hd.getClientRects().length && !parts.includes(t)) {
         parts.push(t);
         if (parts.length === 2) break;
       }
     }
-    return parts.join(' · ') || document.title || 'Screen';
+    if (parts.length) return parts.join(' · ');
+    if (location.hash.length > 1) return location.hash.slice(1).slice(0, 80);
+    for (const n of rootEl.querySelectorAll('h4, h5, h6, [role="heading"], legend, strong')) {
+      const t = (n.innerText || '').trim();
+      if (t && t.length <= 40 && n.getClientRects().length) return t;
+    }
+    return document.title || 'Screen';
   }
 
   /* ---------- anchors ---------- */
@@ -337,6 +349,29 @@
 
   const resolveAnchor = (anchor) => locateAnchor(anchor).pos;
 
+  /* ---------- page identity ---------- */
+
+  // A page is pathname + hash: hash routers ("#/settings") are pages too.
+  const currentPage = () => location.pathname + location.hash;
+  const splitPage = (p) => {
+    const i = p.indexOf('#');
+    return i < 0 ? { path: p, hash: '' } : { path: p.slice(0, i), hash: p.slice(i) };
+  };
+  // Legacy threads stored pathname only → match on pathname alone.
+  function pageMatches(tPage) {
+    if (!tPage) return true;
+    const { path, hash } = splitPage(tPage);
+    if (path !== location.pathname) return false;
+    return !hash || hash === location.hash;
+  }
+  function deepLinkUrl(t) {
+    const { path, hash } = splitPage(t.page || location.pathname);
+    const u = new URL(path || '/', location.origin);
+    u.searchParams.set('comment', t.id);
+    u.hash = hash;
+    return u.href;
+  }
+
   // Older builds used a single-heading label; newer ones join two ("A · B").
   // A legacy label equals the first part of its composite successor.
   function labelsMatch(a, b) {
@@ -349,8 +384,7 @@
   // Page check first: on multi-page prototypes two pages can share headings,
   // and a label match alone would render the pin on the wrong page.
   const onThisScreen = (t) =>
-    (!t.page || t.page === location.pathname) &&
-    (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
+    pageMatches(t.page) && (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
 
   /* ---------- api ---------- */
 
@@ -809,6 +843,8 @@
             screenLabel: state.draft.screenLabel || state.screenLabel,
             anchor: state.draft.anchor,
             proto: state.proto,
+            page: currentPage(),
+            trail: state.draft.trail,
             page: location.pathname,
           });
           state.draft = null;
@@ -857,7 +893,7 @@
     linkBtn.title = 'Copy link to comment';
     linkBtn.setAttribute('aria-label', 'Copy link to comment');
     linkBtn.addEventListener('click', async () => {
-      const url = `${location.origin}${t.page || '/'}?comment=${t.id}`;
+      const url = deepLinkUrl(t);
       try {
         await navigator.clipboard.writeText(url);
         toast('Link copied');
@@ -1179,9 +1215,9 @@
     // Multi-page prototypes: the thread remembers its page — navigate there
     // directly; the deep-link boot on that page finishes the jump. Click
     // replay can't cross documents, so this is the only route that works.
-    if (t.page && t.page !== location.pathname) {
+    if (!pageMatches(t.page)) {
       toastSticky('Taking you to the comment…');
-      location.href = `${t.page}?comment=${t.id}`;
+      location.href = deepLinkUrl(t);
       return;
     }
     navigating = true;
@@ -1582,8 +1618,13 @@
 
   // Deep link: /?comment=<id> — strip it from the URL immediately (a
   // reload-teleport must not re-trigger it) and jump after boot.
-  const deepLink = new URLSearchParams(location.search).get('comment');
-  if (deepLink) history.replaceState(null, '', location.pathname);
+  const bootUrl = new URL(location.href);
+  const deepLink = bootUrl.searchParams.get('comment');
+  if (deepLink) {
+    // Strip only our param — hash routers and the prototype's own query survive.
+    bootUrl.searchParams.delete('comment');
+    history.replaceState(null, '', bootUrl.pathname + bootUrl.search + bootUrl.hash);
+  }
 
   setTimeout(() => {
     state.screen = screenLabel();
