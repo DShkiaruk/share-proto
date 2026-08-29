@@ -5,3 +5,4 @@ node_modules/
 worker/wrangler.log
 test-results/
 playwright-report/
+tests/fixtures/site/

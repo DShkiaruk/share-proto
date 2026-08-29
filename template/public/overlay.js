@@ -86,6 +86,9 @@
     active: null, // open thread id
     pendingJump: null, // thread id we're guiding the user to
     confirmDelete: null,
+    presenting: false, // H: everything hidden, a dot remains
+    sort: localStorage.getItem('fp_sort') || 'newest',
+    roleFilter: 'all', // designer-only: all | client | team
   };
 
   const roleLabel = () => (state.role === 'designer' ? 'Designer' : 'Client');
@@ -674,7 +677,7 @@
   const tbAvatar = el('span', 'tb-avatar');
   const grip = el('span', 'tb-grip');
   grip.append(icon('grip'));
-  grip.title = 'Drag to move · double-click to reset · H hides the toolbar';
+  grip.title = 'Drag to move · double-click to reset · H hides comments · J/K next/previous';
   toolbar.append(grip, btnMode, el('span', 'tb-divider'), btnThreads, btnEye, tbAvatar);
 
   /* ---------- draggable toolbar (dodge prototype's own bars) ---------- */
@@ -759,10 +762,25 @@
 
   const pinEls = new Map();
 
-  function visiblePins() {
-    // Every thread gets a pin element; positionPins() shows it only when its
-    // anchor resolves on the current screen.
-    return state.threads.filter((t) => (state.filter === 'resolved' ? t.resolved : !t.resolved));
+  // Status filter (Open/Resolved) + designer's role filter. Pins, sidebar and
+  // J/K all read the same set.
+  function threadsInView() {
+    return state.threads.filter(
+      (t) =>
+        (state.filter === 'resolved' ? t.resolved : !t.resolved) &&
+        (state.roleFilter === 'all' ||
+          (state.roleFilter === 'client' ? t.authorRole === 'client' : t.authorRole === 'designer'))
+    );
+  }
+  // Every thread in view gets a pin element; positionPins() shows it only
+  // when it belongs to the current screen.
+  const visiblePins = () => threadsInView();
+
+  function sortThreads(list) {
+    const arr = list.slice();
+    if (state.sort === 'oldest') return arr.sort((a, b) => (a.n || 0) - (b.n || 0));
+    if (state.sort === 'unread') return arr.sort((a, b) => isUnread(b) - isUnread(a) || lastAt(b) - lastAt(a));
+    return arr.sort((a, b) => lastAt(b) - lastAt(a)); // newest (also inside "by screen" groups)
   }
 
   // The last trail click is the trigger that opened the commented state.
@@ -968,12 +986,15 @@
 
     const head = el('div', 'head');
     const who = el('div', 'who');
-    who.append(avatar(t.author, 24), el('span', 'name', t.author));
+    who.append(el('span', 'num', `#${t.n}`), avatar(t.author, 24), el('span', 'name', t.author));
     const rb = roleBadge(t);
     if (rb) who.appendChild(el('span', 'badge', rb));
     if (t.proto && state.proto && t.proto !== state.proto) {
       who.appendChild(el('span', 'badge old-version', 'Older version'));
     }
+    const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
+    const at = ordered.findIndex((x) => x.id === t.id);
+    if (at >= 0) who.appendChild(el('span', 'nav-pos', `${at + 1} of ${ordered.length}`));
     head.appendChild(who);
 
     const linkBtn = el('button', 'icon-btn');
@@ -1055,7 +1076,7 @@
       if (t.screenLabel) go.appendChild(el('span', 'goto-screen', t.screenLabel));
       go.addEventListener('click', () => {
         closePopover();
-        autoNavigate(t);
+        goTo(t);
       });
       popover.appendChild(go);
     }
@@ -1300,6 +1321,79 @@
   // Drive the prototype hop by hop, re-planning after every step: bad edges
   // happen (recorded on old builds, mis-attributed clicks) and a single one
   // must not kill the trip — ban it and route around from wherever we are.
+  // Synthetic pointer sequence: many UI kits open menus on pointerdown, not click.
+  function synthClick(target) {
+    const r = target.getBoundingClientRect();
+    const base = {
+      bubbles: true, cancelable: true, composed: true, view: window,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+    };
+    const fire = (Ctor, type, buttons) => {
+      try {
+        target.dispatchEvent(new Ctor(type, { ...base, buttons }));
+      } catch {
+        /* old engines */
+      }
+    };
+    fire(PointerEvent, 'pointerdown', 1);
+    fire(MouseEvent, 'mousedown', 1);
+    fire(PointerEvent, 'pointerup', 0);
+    fire(MouseEvent, 'mouseup', 0);
+    target.click();
+  }
+
+  async function waitFor(pred, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      if (pred()) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return Boolean(pred());
+  }
+
+  // Reproduce the state a comment was left in by replaying its trail until the
+  // anchored element appears. Stops early at the first step that cannot be found.
+  async function replayTrail(t) {
+    const steps = t.trail || [];
+    for (let i = 0; i < steps.length; i++) {
+      if (locateAnchor(t.anchor).pos) return true;
+      const loc = locateAnchor(steps[i].anchor);
+      if (!loc.el) return false;
+      synthClick(loc.el);
+      const next = steps[i + 1];
+      await waitFor(() => locateAnchor(t.anchor).pos || (next && locateAnchor(next.anchor).el), 1500);
+    }
+    return Boolean(locateAnchor(t.anchor).pos);
+  }
+
+  // On the right screen: reopen the state if needed, then open the thread.
+  async function openAtState(t) {
+    cancelJump();
+    if (!locateAnchor(t.anchor).pos && t.trail?.length) {
+      toastSticky('Opening the state with this comment…');
+      await replayTrail(t);
+      clearSticky();
+      positionPins();
+    }
+    if (locateAnchor(t.anchor).pos || !t.anchor?.container) return jumpToThread(t);
+    armGuided(t, `Open “${t.anchor.container.name || 'the menu'}” — the comment will appear there · Esc to cancel`);
+  }
+
+  // One click from anywhere: other page → other screen → closed state → pin.
+  async function goTo(t) {
+    if (state.presenting) togglePresent();
+    if (state.pinsHidden) setPinsHidden(false);
+    setSidebar(false);
+    if (!pageMatches(t.page)) {
+      toastSticky('Taking you to the comment…');
+      location.href = deepLinkUrl(t);
+      return;
+    }
+    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t);
+    return openAtState(t);
+  }
+
   async function autoNavigate(t) {
     if (navigating) return;
     // Multi-page prototypes: the thread remembers its page — navigate there
@@ -1337,7 +1431,7 @@
           banned.add(`${from}>${step.to}`);
           continue;
         }
-        loc.el.click();
+        synthClick(loc.el);
         if (!(await waitForScreen(step.to, 5000))) {
           banned.add(`${from}>${step.to}`);
           // fall through: next iteration re-plans from the actual screen
@@ -1348,7 +1442,7 @@
       if (labelsMatch(state.screen, t.screenLabel) || labelsMatch(state.screen, target)) {
         clearSticky();
         renderPins();
-        jumpToThread(state.threads.find((x) => x.id === t.id) || t);
+        openAtState(state.threads.find((x) => x.id === t.id) || t);
       } else {
         clearSticky();
         armGuided(t);
@@ -1376,11 +1470,12 @@
 
   // Fallback when no learned route exists: the user navigates manually and
   // the comment pops open the moment its screen shows.
-  function armGuided(t) {
+  function armGuided(t, message) {
     setSidebar(false);
     state.pendingJump = t.id;
     toastSticky(
-      `Navigate to “${t.screenLabel || 'the screen with this comment'}” — it will open there · Esc to cancel`
+      message ||
+        `Navigate to “${t.screenLabel || 'the screen with this comment'}” — it will open there · Esc to cancel`
     );
   }
 
@@ -1417,6 +1512,7 @@
     const t = state.threads.find((x) => x.id === state.pendingJump);
     if (!t) return cancelJump();
     if (!onThisScreen(t)) return;
+    if (t.anchor?.container && !locateAnchor(t.anchor).pos) return; // state still closed
     jumpToThread(t);
   }
 
@@ -1446,6 +1542,7 @@
     head.appendChild(closeBtn);
     sidebar.appendChild(head);
 
+    const controls = el('div', 'sb-controls');
     const seg = el('div', 'seg');
     for (const f of ['open', 'resolved']) {
       const b = el('button', state.filter === f ? 'on' : '', f === 'open' ? 'Open' : 'Resolved');
@@ -1456,24 +1553,46 @@
       });
       seg.appendChild(b);
     }
-    sidebar.appendChild(seg);
+    const sort = el('select', 'sort');
+    sort.setAttribute('aria-label', 'Sort comments');
+    for (const [v, label] of [['newest', 'Newest'], ['oldest', 'Oldest'], ['unread', 'Unread first'], ['screen', 'By screen']]) {
+      const o = el('option', null, label);
+      o.value = v;
+      o.selected = state.sort === v;
+      sort.appendChild(o);
+    }
+    sort.addEventListener('change', () => {
+      state.sort = sort.value;
+      localStorage.setItem('fp_sort', state.sort);
+      renderSidebar();
+    });
+    controls.append(seg, sort);
+    sidebar.appendChild(controls);
+
+    if (state.role === 'designer') {
+      const chips = el('div', 'chips');
+      for (const [v, label] of [['all', 'All'], ['client', 'Client'], ['team', 'Team']]) {
+        const c = el('button', 'chip' + (state.roleFilter === v ? ' on' : ''), label);
+        c.addEventListener('click', () => {
+          state.roleFilter = v;
+          renderSidebar();
+          renderPins();
+        });
+        chips.appendChild(c);
+      }
+      sidebar.appendChild(chips);
+    }
 
     const list = el('div', 'sb-list');
-    const match = state.threads.filter((t) => (state.filter === 'resolved' ? t.resolved : !t.resolved));
-    const here = match.filter(onThisScreen);
-    const elsewhere = match.filter((t) => !onThisScreen(t));
+    const match = threadsInView();
 
     const addRows = (items, label) => {
       if (!items.length) return;
-      list.appendChild(el('div', 'sb-group', label));
-      // Ordering: unread first, then most recent activity.
-      items = items
-        .slice()
-        .sort((a, b) => isUnread(b) - isUnread(a) || lastAt(b) - lastAt(a));
-      for (const t of items) {
+      if (label) list.appendChild(el('div', 'sb-group', label));
+      for (const t of sortThreads(items)) {
         const row = el('button', 'sb-row' + (t.resolved ? ' resolved' : '') + (isUnread(t) ? ' unread' : ''));
         const meta = el('div', 'meta');
-        meta.append(avatar(t.author, 24), el('span', 'name', t.author));
+        meta.append(el('span', 'num', `#${t.n}`), avatar(t.author, 24), el('span', 'name', t.author));
         const rb = roleBadge(t);
         if (rb) meta.appendChild(el('span', 'badge', rb));
         if (t.resolved) {
@@ -1485,23 +1604,21 @@
         if (isUnread(t)) meta.appendChild(el('span', 'row-dot'));
         row.appendChild(meta);
         row.appendChild(el('div', 'excerpt', t.messages[0]?.text || ''));
-        if (t.messages.length > 1) {
-          row.appendChild(el('div', 'replies', `${t.messages.length - 1} ${t.messages.length === 2 ? 'reply' : 'replies'}`));
-        }
-        row.addEventListener('click', () => {
-          if (state.pinsHidden) setPinsHidden(false);
-          if (onThisScreen(t)) {
-            jumpToThread(t);
-          } else {
-            openThread(t.id, null); // other screen: popover carries Go to comment
-          }
-        });
+        const extras = [];
+        if (t.messages.length > 1) extras.push(`${t.messages.length - 1} ${t.messages.length === 2 ? 'reply' : 'replies'}`);
+        if (t.anchor?.container?.name) extras.push(`in: ${t.anchor.container.name}`);
+        if (extras.length) row.appendChild(el('div', 'replies', extras.join(' · ')));
+        row.addEventListener('click', () => goTo(t));
         list.appendChild(row);
       }
     };
 
-    addRows(here, 'On this screen');
-    addRows(elsewhere, 'Other screens');
+    if (state.sort === 'screen') {
+      addRows(match.filter(onThisScreen), 'On this screen');
+      addRows(match.filter((t) => !onThisScreen(t)), 'Other screens');
+    } else {
+      addRows(match, null);
+    }
 
     if (!match.length) {
       list.appendChild(
@@ -1538,6 +1655,7 @@
   /* ---------- comment mode ---------- */
 
   function setMode(on) {
+    if (on && state.presenting) togglePresent();
     state.mode = on;
     clickLayer.hidden = !on;
     if (on && state.pinsHidden) setPinsHidden(false);
@@ -1572,10 +1690,52 @@
 
   /* ---------- global events ---------- */
 
-  function toggleToolbar() {
-    const hidden = toolbar.style.display === 'none';
-    toolbar.style.display = hidden ? '' : 'none';
-    if (!hidden) toast('Toolbar hidden — press H to bring it back', 4000);
+  // H = presentation mode: toolbar, pins, popover and sidebar all go; a faint
+  // dot stays as the way back. Restores what was open.
+  let presentSaved = null;
+  let presentDot = null;
+  function togglePresent() {
+    state.presenting = !state.presenting;
+    if (state.presenting) {
+      presentSaved = { sidebar: state.sidebar };
+      closePopover();
+      cancelDraft();
+      if (state.mode) setMode(false);
+      if (state.sidebar) setSidebar(false);
+      toolbar.style.display = 'none';
+      pinsLayer.style.display = 'none';
+      presentDot = el('button', 'present-dot');
+      presentDot.title = 'Show comments (H)';
+      presentDot.setAttribute('aria-label', 'Show comments');
+      presentDot.addEventListener('click', togglePresent);
+      root.appendChild(presentDot);
+      let hinted = false;
+      try {
+        hinted = sessionStorage.getItem('fp_present_hint') === '1';
+        sessionStorage.setItem('fp_present_hint', '1');
+      } catch {
+        /* storage blocked */
+      }
+      if (!hinted) toast('Hidden — press H to bring comments back', 4000);
+    } else {
+      presentDot?.remove();
+      presentDot = null;
+      toolbar.style.display = '';
+      pinsLayer.style.display = state.pinsHidden ? 'none' : '';
+      if (presentSaved?.sidebar) setSidebar(true);
+      presentSaved = null;
+      renderAll();
+    }
+  }
+
+  // J/K (or ] [): walk comments by number within the current filter.
+  function stepThread(dir) {
+    const list = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
+    if (!list.length) return;
+    let i = list.findIndex((t) => t.id === state.active);
+    if (i < 0) i = dir > 0 ? -1 : list.length;
+    i = (i + dir + list.length) % list.length;
+    goTo(list[i]);
   }
 
   document.addEventListener('keydown', (e) => {
@@ -1594,7 +1754,9 @@
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     // e.code — layout-independent (works on Cyrillic layouts too)
     if (e.code === 'KeyC') setMode(!state.mode);
-    else if (e.code === 'KeyH') toggleToolbar();
+    else if (e.code === 'KeyH') togglePresent();
+    else if (e.code === 'KeyJ' || e.code === 'BracketRight') stepThread(1);
+    else if (e.code === 'KeyK' || e.code === 'BracketLeft') stepThread(-1);
   });
 
   document.addEventListener(
@@ -1734,8 +1896,7 @@
       const go = () => {
         const t = state.threads.find((x) => x.id === jump);
         if (t) {
-          if (onThisScreen(t)) jumpToThread(t);
-          else autoNavigate(t);
+          goTo(t);
         } else clearSticky();
       };
       if (state.threads.length) setTimeout(go, 800);
