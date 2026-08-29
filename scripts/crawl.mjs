@@ -108,20 +108,30 @@ while (queue.length && seen.size < MAX && budget()) {
   const from = await label();
   const cs = (await controls()).filter((c) => c.txt && !SKIP.test(c.txt));
   const tried = new Set();
+  // Reload only after a click that changed the screen: on heavy prototypes a
+  // reload costs seconds, and most controls (menus, toggles) stay on-screen.
+  let dirty = false;
   for (const c of cs) {
     if (!budget() || seen.size >= MAX) break;
     if (tried.has(c.txt)) continue;
     tried.add(c.txt);
-    if (!(await replay(path))) break;
-    await page.mouse.click(c.x, c.y);
-    await settle(1500);
+    if (dirty) {
+      if (!(await replay(path))) break;
+      dirty = false;
+    }
+    const live = (await controls()).find((x) => x.txt === c.txt) || c; // position may have shifted
+    await page.mouse.click(live.x, live.y);
+    await settle(1200);
     const to = await label();
-    if (to !== from && !seen.has(to)) {
-      seen.set(to, [...path, c]);
-      queue.push([...path, c]);
-      edges++; // the overlay records the edge itself from this trusted click
-      if (await shoot(to)) shots++;
-      console.log(`  "${from}" → "${to}"  via "${c.txt}"`);
+    if (to !== from) {
+      dirty = true;
+      if (!seen.has(to)) {
+        seen.set(to, [...path, c]);
+        queue.push([...path, c]);
+        edges++; // the overlay records the edge itself from this trusted click
+        if (await shoot(to)) shots++;
+        console.log(`  "${from}" → "${to}"  via "${c.txt}"`);
+      }
     }
   }
 }
