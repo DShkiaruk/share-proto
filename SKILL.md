@@ -1,6 +1,6 @@
 ---
-name: share-proto-local
-description: Share an HTML prototype (or a set of frozen snapshots of real product screens) behind a password with a built-in comment layer (pins, threads, replies, resolve, cross-page Go to comment). Two passwords = two roles — designers see all comments, the client sees only client comments (enforced server-side). Runs fully local with zero dependencies (no Vercel account needed) or deploys to Vercel. Use when the user wants to share a prototype or screens for feedback, e.g. "share my prototype", "add comments to my prototype", "let the client leave comments".
+name: share-proto
+description: Share an HTML prototype (or a set of frozen snapshots of real product screens) behind a password with a built-in comment layer (pins, threads, replies, resolve, cross-page Go to comment). Two passwords = two roles — designers see all comments, the client sees only client comments (enforced server-side). Three modes: Vercel (default, private Blob store), fully local with zero dependencies (no Vercel account needed), or embed on someone else's deployment. Use when the user wants to share a prototype or screens for feedback, e.g. "share my prototype", "add comments to my prototype", "let the client leave comments".
 ---
 
 # Share a prototype with comments
@@ -9,11 +9,21 @@ Output: a live password-protected URL + two passwords (designers / client). One 
 
 The `template/` next to this file already contains the whole system — auth middleware, comments API, overlay UI. It is battle-tested; **assemble it, don't rebuild it**.
 
+## Modes
+
+| Mode | Pick when | Steps |
+|---|---|---|
+| **Vercel** (default) | permanent link, no infra of your own | Steps 1–7 below |
+| **Local** | nothing may leave the machine / no Vercel account | "Local mode — no Vercel" |
+| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel, or `worker/`) |
+
+If the user didn't say, default to Vercel and mention the other two in one line.
+
 ## Input cases — pick by what the user has
 
 - **A. Local HTML file** (prototype not online yet): follow all steps below.
 - **B. URL of an online prototype** (deployed anywhere, no local file): download it first — `curl -sL <url> -o /tmp/proto.html` — then follow all steps with that file. The result is a NEW protected URL; remind the user the old public URL stays open and they may want to take it down.
-- **C. Local project already deployed to Vercel** (has `.vercel/` link, e.g. made by this skill earlier or a plain static deploy): install the tool in place instead of assembling fresh — copy `template/`'s `api/`, `lib/`, `middleware.js`, `vercel.json`, `package.json` deps, and `public/overlay.js`, `public/overlay.css`, `public/login.html`, `public/favicon.svg` into the project; inject the overlay tag + viewport into its HTML entry (reuse the injection logic from `assemble.py`); then continue from step 3 (secrets) in that directory. Same domain keeps working.
+- **C. Local project already deployed to Vercel** (has `.vercel/` link, e.g. made by this skill earlier or a plain static deploy): install the tool in place instead of assembling fresh — copy `template/`'s `api/`, `lib/`, `middleware.js`, `vercel.json`, `.vercelignore`, `package.json` deps, and `public/overlay.js`, `public/overlay.css`, `public/login.html`, `public/favicon.svg` into the project; inject the overlay tag + viewport into its HTML entry (reuse the injection logic from `assemble.py`); then continue from step 3 (secrets) in that directory. Same domain keeps working.
 
 If it's unclear which case applies, ask one short question.
 
@@ -65,7 +75,7 @@ pages; only `/overlay.js`, `/overlay.css` and `/api/*` matter. Set
 
 ## Hard rules
 
-- **Never rewrite `api/comments.js` storage logic.** It is append-only on purpose: Vercel Blob's CDN caches overwritten blobs for ~60s, so overwriting = replies/resolves silently reverting. Every mutation writes a new immutable blob + snapshot.
+- **Never rewrite the storage model in `api/comments.js` / `lib/storage.js`.** Events are append-only and are the source of truth; `state.json` is a derived document written with ETag preconditions and read with `useCache:false`. Overwriting event blobs or reading the document through the CDN cache brings back silently-reverting replies (v1 lesson) and quota-burning `list()` polls (v2 lesson).
 - **Never remove the overlay's anchor model** (path + tag + text-hint). Screen-hash approaches break on responsive prototypes that render different DOM per breakpoint.
 - The client role must never receive designer threads from the API. If you touch the API, re-verify this before finishing.
 
@@ -116,7 +126,7 @@ The CLI's link prompt needs a real TTY — drive it with `expect` (preinstalled 
 cat > /tmp/blob-link.exp <<'EOF'
 #!/usr/bin/expect -f
 set timeout 60
-spawn vercel blob create-store <name>-comments --access public
+spawn vercel blob create-store <name>-comments --access private
 expect {
   -re {link this blob store.*} { send "y\r"; exp_continue }
   -re {Select environments.*} { sleep 1; send "\r"; exp_continue }
@@ -127,6 +137,8 @@ EOF
 expect /tmp/blob-link.exp
 vercel env ls | grep BLOB_READ_WRITE_TOKEN   # must exist before continuing
 ```
+
+The store is **private**: nothing in it is readable without the project's token; comments and images are served only through the API with a valid session. Upgrading a v1 project that still has a *public* store? Export `GET /api/comments` as a designer, create a private store with the command above, replay the export with `node <skill-dir>/scripts/seed.mjs export.json` (needs `BLOB_READ_WRITE_TOKEN` from `vercel env pull`), deploy, then open `/api/comments?rebuild=1` once as a designer.
 
 If the token is missing: `vercel blob list-stores --all`, delete the orphan store with `vercel blob delete-store <id> --yes`, re-run the expect script.
 
@@ -165,7 +177,8 @@ Then briefly, in prose:
 
 - How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Threads sidebar lists everything; resolve with the check icon; H hides the toolbar.
 - Roles: designers see all comments; the client sees only client comments (server-enforced).
-- To update the prototype later: run assemble.py again into a fresh dir? No — simpler: replace `public/index.html` with the new export, re-add the `<script src="/overlay.js" defer></script>` line before `</body>` (assemble.py's injection), then `vercel deploy --prod --yes`. Comments survive — they live in Blob, keyed to elements.
+- To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
+- If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.
 - To wipe all comments: `vercel blob empty-store --yes` from the project dir.
 
 ## Notes
