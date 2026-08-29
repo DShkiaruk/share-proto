@@ -43,10 +43,10 @@ Method: separate test store; loop 50× {put N; get; assert N} with 0 ms and 200 
 ### 4.3 Branch A — spike passes (expected)
 
 - Store is **private** (`vercel blob create-store … --access private`). Nothing in the store is reachable without `BLOB_READ_WRITE_TOKEN`.
-- Events stay **append-only** (`threads/<tid>/<ts>-<uuid>.json` etc.) — they are the source of truth and the audit trail.
-- Snapshots move to **fixed pathnames**, overwritten: `snap.json`, `navsnap.json`, `versions.json`, `mapmeta.json`. Read with `get(…, { useCache: false })`. `GET /api/comments` = **1 simple operation, 0 advanced**.
-- Rebuild-from-events stays as the repair path (`?rebuild=1`, designer only) and runs automatically when `snap.json` is missing.
-- Snapshot GC code is deleted (nothing to GC).
+- Events stay **append-only** (`threads/<tid>/<ts>-<uuid>.json` etc.) — they are the source of truth. (Deleting a thread purges its content blobs and keeps only the tombstone, as in v1 — the log is not a full audit trail.)
+- The derived state moves to **one fixed-name document**, `state.json` = `{ v, threads, nav, updatedAt }` (later phases add `versions.json`, `mapmeta.json`). Read with `get(…, { useCache: false })`; written only conditionally — `ifMatch` on the ETag that was read, or create-if-absent — so racing writers never erase each other (`lib/state.js`, unit-tested with an injected fake store). `GET /api/comments` = **1 simple operation, 0 advanced**. Every response carries `X-Store-Path` (`read | rebuild | patch | retry | unsaved`) so slow paths are observable.
+- Rebuild-from-events stays as the repair path (`?rebuild=1`, designer only) and runs automatically when `state.json` is missing or corrupt.
+- Snapshot GC code is deleted (nothing to GC). Deleting a thread purges its content blobs as in v1.
 
 ### 4.4 Branch B — spike fails
 
@@ -215,7 +215,7 @@ Algorithm: login → for each known screen (BFS, starting at boot): reload, repl
 - v1 threads: no `n`, `page`, `trail`, `status`, `kind` — all derived or defaulted at rebuild; UI never assumes presence.
 - v1 labels ("A" vs composite "A · B") — `labelsMatch` stays.
 - `proto` badge logic unchanged (`t.proto !== state.proto`).
-- Live deployments upgrade by replacing `public/overlay.*`, `api/*`, `lib/*` and running `?rebuild=1` once; the ETag nudge tells long-lived tabs to refresh.
+- Live v1 deployments all use **public** stores, which the v2 read path cannot use (`get(useCache:false)` → 403 on public stores, see the spike). Upgrade = export `GET /api/comments` as a designer → create a private store → `scripts/seed.mjs export.json` → deploy v2 → `?rebuild=1` once. The ETag nudge tells long-lived tabs to refresh.
 
 ## 12. Testing
 

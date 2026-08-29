@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { Readable, pipeline } from 'node:stream';
 import { getFile, readJson } from '../lib/storage.js';
 import { canSee } from '../lib/threads.js';
 import { sessionFromHeaders } from '../lib/session.js';
@@ -7,7 +7,9 @@ import { applyCors, roomFromReq } from '../lib/cors.js';
 /* Serves private media (thread previews, attachments, screen shots) behind
    the session. Pathnames are content-unique, so responses are immutable.
      previews/<tid>/<file>  attach/<tid>/<file>   → visible thread only
-     shots/<key>/<file>                            → any signed-in role */
+     shots/<key>/<file>                            → any signed-in role
+   Visibility is checked against state.json; if the document is missing
+   (never polled yet) media 404s until the first /api/comments GET rebuilds it. */
 
 const SAFE = /^(previews|attach|shots)\/[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}\.(jpe?g|png|webp)$/;
 
@@ -41,5 +43,8 @@ export default async function handler(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (file.size) res.setHeader('Content-Length', String(file.size));
   res.status(200);
-  Readable.fromWeb(file.stream).pipe(res);
+  pipeline(Readable.fromWeb(file.stream), res, (err) => {
+    if (err && !res.headersSent) res.status(500).end();
+    else if (err) res.destroy(err);
+  });
 }

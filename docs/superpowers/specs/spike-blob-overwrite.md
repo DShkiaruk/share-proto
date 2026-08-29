@@ -15,6 +15,8 @@ Probe: `scripts/spike-blob.mjs` — 50 × {put, (0 or 200 ms), get, assert}, the
 
 Legacy public stores: the fresh-read path does not work on them (403), so `lib/storage.js` is **private-only**. A v1 deployment upgrades by exporting `GET /api/comments` as a designer, creating a private store, replaying the export with `scripts/seed.mjs`, and opening `/api/comments?rebuild=1` once. `BLOB_ACCESS=public` (from the plan) is dropped as a dead path.
 
-## Lab verification
+## Lab verification (2026-08-29)
 
-Filled in Task 10 Step 6.
+- `get()` on a larger document (`state.json`, ~40 KB) returned a **weak** ETag `W/"…"` while `head()` returned the strong `"…"`; `put({ifMatch: 'W/"…"'})` fails as a precondition error. The spike missed it because its document was 12 bytes. Fix: `normalizeEtag()` strips `W/` in `lib/storage.js` (verified on the lab: stripped tag accepted, same value as `head()`).
+- Operation counts are asserted machine-side instead of via the dashboard: `scripts/smoke.sh` and `tests/e2e/smoke.spec.mjs` require `X-Store-Path: read` on polls and `X-Store-Path: patch` on a create (no `list()` on either path).
+- `scripts/seed.mjs` re-run against the seeded lab store: `0 written, 39 already present` — idempotent.

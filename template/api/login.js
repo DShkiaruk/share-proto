@@ -23,7 +23,7 @@ function noteFail(ip) {
   if (fails.size > 5000) fails.clear();
 }
 const clientIp = (req) =>
-  String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || '')
+  String(req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '')
     .split(',')[0]
     .trim();
 

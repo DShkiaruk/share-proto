@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-share-proto-v2-design.md` (sections 3, 4, 10, 12, 13, 14).
 
+## Execution notes (2026-08-29)
+
+Executed on branch `v2`. Deviations from the text below, all deliberate:
+- Spike verdict **A**, but `get(useCache:false)` returns 403 on public stores → `lib/storage.js` is private-only; `BLOB_ACCESS=public` (mentioned in Tasks 7, 10, 12) was dropped; v1 upgrades migrate via `scripts/seed.mjs`.
+- The document logic moved out of `api/comments.js` into `lib/state.js` (injected storage, unit-tested in `tests/unit/state.test.mjs`) after review found an unre-applied patch in the rebuild fallback and unconditional writes; all writes are now `ifMatch`/`ifAbsent`, and responses carry `X-Store-Path`.
+- Vercel CLI 59 treats a root `server.js` as a Node entrypoint → `template/.vercelignore` (`/server.js`, `/data/`) and `"framework": null` in `vercel.json`.
+- Lab verification of Blob operation counts is done by asserting `X-Store-Path: patch|read` in smoke/e2e instead of reading the dashboard.
+- Task 3 Step 5 (re-pointing the merged `comments.js`) was folded into the Task 8 rewrite.
+
 ## Global Constraints
 
 - The client role must never receive designer threads from the API — re-verify after any API change (spec §1).

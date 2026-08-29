@@ -26,13 +26,16 @@ check "$(curl -s -b "$TMP/team.jar" "$D/" | grep -c 'overlay.js')" 1 "designer s
 check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(d.get("role"), isinstance(d.get("threads"), list))')" "designer True" "designer GET /api/comments"
 
 # Role isolation: a designer-created thread must be invisible to the client.
-TID=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
+check "$(curl -s -D - -o /dev/null -b "$TMP/team.jar" "$D/api/comments" | grep -ci 'cache-control: no-store')" 1 "GET /api/comments is no-store"
+TID=$(curl -s -D "$TMP/create.h" -b "$TMP/team.jar" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke (designer)","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
   "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("id",""))')
+check "$(grep -i '^x-store-path:' "$TMP/create.h" | tr -d '\r' | awk '{print $2}')" patch "create took the fast path (no rebuild, no list)"
 check "$(curl -s -b "$TMP/client.jar" "$D/api/comments" | grep -c "$TID")" 0 "client does not see designer thread"
 check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | grep -c "$TID")" 1 "designer sees own thread"
 REPLY='{"action":"reply","threadId":"'"$TID"'","text":"x"}'
 check "$(code -b "$TMP/client.jar" -H 'Content-Type: application/json' -d "$REPLY" "$D/api/comments")" 404 "client cannot reply to designer thread"
+check "$(code -b "$TMP/client.jar" "$D/api/file?p=previews/$TID/x.jpg")" 404 "client cannot fetch media of a designer thread"
 DELETE='{"action":"delete","threadId":"'"$TID"'"}'
 check "$(code -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$DELETE" "$D/api/comments")" 200 "cleanup: delete smoke thread"
 check "$(code "$D/api/file?p=previews/x/y.jpg")" 401 "GET /api/file without cookie → 401"

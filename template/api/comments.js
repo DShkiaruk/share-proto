@@ -1,7 +1,8 @@
 import {
-  clean, canSee, assemble, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, navPatch,
+  clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, navPatch,
 } from '../lib/threads.js';
-import { readJson, writeJson, appendEvent, readEvents, listAll, delAll, ConflictError } from '../lib/storage.js';
+import * as storage from '../lib/storage.js';
+import { createStateStore } from '../lib/state.js';
 import { sessionFromHeaders } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
@@ -10,9 +11,11 @@ import { applyCors, roomFromReq } from '../lib/cors.js';
        <root>threads/<tid>/<ts>-<uuid>.json   msg | state | edit | tomb
        <root>nav/e-<ts>-<uuid>.json            {from, to, anchor, at}
    - one document, <root>state.json = {v, threads, nav, updatedAt}, patched per
-     mutation with optimistic concurrency (ETag ifMatch) and read with
-     useCache:false. A poll is one read, no list(). Missing/corrupt document
-     → rebuilt from events. Designer GET ?rebuild=1 forces that.
+     mutation with optimistic concurrency (ETag ifMatch / ifAbsent) and read
+     with useCache:false — see lib/state.js. A poll is one read, no list().
+     Missing/corrupt document → rebuilt from events. Designer GET ?rebuild=1
+     forces that. Every response carries X-Store-Path (read | rebuild |
+     patch | retry | unsaved) so the slow paths are observable.
    <root> is '' for classic installs or rooms/<room>/ in embed mode. */
 
 const MAX_TEXT = 3000;
@@ -22,47 +25,7 @@ const NAV_CAP = 500;
 const ts = (at) => String(at).padStart(PAD, '0');
 const uuid = () => crypto.randomUUID();
 
-const emptyState = () => ({ v: 2, threads: [], nav: {}, updatedAt: 0 });
-
-async function rebuild(root) {
-  const [threadEvents, navBlobs] = await Promise.all([
-    readEvents(`${root}threads/`),
-    readEvents(`${root}nav/`),
-  ]);
-  const threads = assemble(threadEvents, root);
-  let nav = {};
-  for (const { data: e } of navBlobs.filter((b) => b.data).sort((a, b) => a.data.at - b.data.at)) {
-    nav = navPatch(nav, e.from, e.to, e.anchor, e.at, NAV_CAP);
-  }
-  return { ...emptyState(), threads, nav, updatedAt: Date.now() };
-}
-
-async function loadState(root) {
-  const { data, etag } = await readJson(`${root}state.json`);
-  if (data && data.v === 2 && Array.isArray(data.threads)) return { state: data, etag };
-  const state = await rebuild(root);
-  await writeJson(`${root}state.json`, state).catch(() => {});
-  return { state, etag: null };
-}
-
-// Apply a pure patch to the document; retry on ETag conflicts; fall back to a
-// full rebuild (events already contain this mutation) if writers keep racing.
-async function mutate(root, patch) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const { state, etag } = await loadState(root);
-    const next = { ...state, ...patch(state), updatedAt: Date.now() };
-    try {
-      await writeJson(`${root}state.json`, next, etag ? { ifMatch: etag } : {});
-      return next;
-    } catch (e) {
-      if (!(e instanceof ConflictError)) throw e;
-    }
-  }
-  const rebuilt = await rebuild(root);
-  await writeJson(`${root}state.json`, rebuilt);
-  return rebuilt;
-}
-
+const store = createStateStore(storage, { navCap: NAV_CAP });
 const publicNav = (nav) => Object.fromEntries(Object.entries(nav).map(([k, v]) => [k, v.anchor]));
 
 export default async function handler(req, res) {
@@ -83,13 +46,9 @@ export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
 
   if (req.method === 'GET') {
-    let state;
-    if (url.searchParams.get('rebuild') === '1' && role === 'designer') {
-      state = await rebuild(root);
-      await writeJson(`${root}state.json`, state);
-    } else {
-      ({ state } = await loadState(root));
-    }
+    const wantRebuild = url.searchParams.get('rebuild') === '1' && role === 'designer';
+    const { state, path } = wantRebuild ? await store.forceRebuild(root) : await store.loadState(root);
+    res.setHeader('X-Store-Path', path);
     return res.status(200).json({
       role,
       name: author,
@@ -103,6 +62,7 @@ export default async function handler(req, res) {
   const body = req.body || {};
   const action = body.action;
   const now = Date.now();
+  const eventPath = (tid) => `${root}threads/${tid}/${ts(now)}-${uuid()}.json`;
 
   if (action === 'edge') {
     const from = clean(body.from, 64);
@@ -111,8 +71,9 @@ export default async function handler(req, res) {
     if (!from || !to || from === to || !anchor || JSON.stringify(anchor).length > 3000) {
       return res.status(400).json({ error: 'Bad edge' });
     }
-    await appendEvent(`${root}nav/e-${ts(now)}-${uuid()}.json`, { from, to, anchor, at: now });
-    await mutate(root, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP) }));
+    await storage.appendEvent(`${root}nav/e-${ts(now)}-${uuid()}.json`, { from, to, anchor, at: now });
+    const { path } = await store.mutate(root, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP) }));
+    res.setHeader('X-Store-Path', path);
     return res.status(200).json({ ok: true });
   }
 
@@ -136,16 +97,15 @@ export default async function handler(req, res) {
       resolved: false,
       messages: [{ author, role, text, at: now }],
     };
-    await appendEvent(`${root}threads/${tid}/${ts(now)}-${uuid()}.json`, {
-      type: 'msg', at: now, author, role, text, first,
-    });
-    const state = await mutate(root, (s) => ({ threads: applyCreate(s.threads, thread) }));
+    await storage.appendEvent(eventPath(tid), { type: 'msg', at: now, author, role, text, first });
+    const { state, path } = await store.mutate(root, (s) => ({ threads: applyCreate(s.threads, thread) }));
+    res.setHeader('X-Store-Path', path);
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
   }
 
   const tid = String(body.threadId || '');
   if (!/^[a-f0-9-]{36}$/.test(tid)) return res.status(404).json({ error: 'Thread not found' });
-  const { state: cur } = await loadState(root);
+  const { state: cur } = await store.loadState(root);
   const existing = cur.threads.find((t) => t.id === tid);
   if (!existing || !canSee(role, existing)) return res.status(404).json({ error: 'Thread not found' });
 
@@ -154,7 +114,7 @@ export default async function handler(req, res) {
     const text = clean(body.text, MAX_TEXT);
     if (!text) return res.status(400).json({ error: 'Missing text' });
     const msg = { author, role, text, at: now };
-    await appendEvent(`${root}threads/${tid}/${ts(now)}-${uuid()}.json`, { type: 'msg', ...msg });
+    await storage.appendEvent(eventPath(tid), { type: 'msg', ...msg });
     patch = (s) => ({ threads: applyReply(s.threads, tid, msg) });
   } else if (action === 'edit') {
     const text = clean(body.text, MAX_TEXT);
@@ -164,24 +124,27 @@ export default async function handler(req, res) {
     if (!msg || msg.author !== author || msg.role !== role) {
       return res.status(403).json({ error: 'Not your message' });
     }
-    await appendEvent(`${root}threads/${tid}/${ts(now)}-${uuid()}.json`, { type: 'edit', at: now, target, text });
+    await storage.appendEvent(eventPath(tid), { type: 'edit', at: now, target, text });
     patch = (s) => ({ threads: applyEdit(s.threads, tid, target, text) });
   } else if (action === 'resolve') {
     const resolved = Boolean(body.resolved);
-    await appendEvent(`${root}threads/${tid}/${ts(now)}-${uuid()}.json`, { type: 'state', at: now, resolved });
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, resolved });
     patch = (s) => ({ threads: applyResolve(s.threads, tid, resolved) });
   } else if (action === 'delete') {
     const own = existing.authorRole === role && existing.author === author;
     if (role !== 'designer' && !own) return res.status(403).json({ error: 'Not allowed' });
-    await appendEvent(`${root}threads/${tid}/${ts(now)}-${uuid()}.json`, { type: 'tomb', at: now });
-    const old = await listAll(`${root}threads/${tid}/`);
-    await delAll(old.filter((b) => !b.pathname.includes(ts(now))).map((b) => b.pathname));
+    // Tombstone first, then purge the thread's content blobs (the tombstone
+    // carries `now` in its pathname, so it survives the filter).
+    await storage.appendEvent(eventPath(tid), { type: 'tomb', at: now });
+    const old = await storage.listAll(`${root}threads/${tid}/`);
+    await storage.delAll(old.filter((b) => !b.pathname.includes(ts(now))).map((b) => b.pathname));
     patch = (s) => ({ threads: applyDelete(s.threads, tid) });
   } else {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const state = await mutate(root, patch);
+  const { state, path } = await store.mutate(root, patch);
+  res.setHeader('X-Store-Path', path);
   if (action === 'delete') return res.status(200).json({ ok: true });
   return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
 }

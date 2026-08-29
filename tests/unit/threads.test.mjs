@@ -79,3 +79,25 @@ test('navPatch adds an edge and evicts the oldest beyond cap', () => {
   assert.deepEqual(Object.keys(nav), ['B>C']);
   assert.deepEqual(nav['B>C'], { anchor: { path: 'q' }, at: 2 });
 });
+
+test('assemble accepts the exact v1 first-message shape (no page, no proto)', () => {
+  const v1 = ev(T, 1, {
+    type: 'msg', at: 1, author: 'Ann', role: 'client', text: 'hello',
+    first: { authorRole: 'client', screen: 'S', screenLabel: 'Home', anchor: { path: 'body', ox: 0.5, oy: 0.5, fx: 0.1, fy: 0.2 } },
+  });
+  const [t] = assemble([v1, ev(T, 2, { type: 'state', at: 2, resolved: true })]);
+  assert.equal(t.page, null);
+  assert.equal(t.proto, null);
+  assert.equal(t.resolved, true);
+  assert.equal(t.anchor.fx, 0.1);
+});
+
+test('assemble keeps one copy of a message written twice under different pathnames', () => {
+  const dup = { type: 'msg', at: 2, author: 'Bob', role: 'designer', text: 'reply' };
+  const [t] = assemble([
+    first(T, 1),
+    { pathname: `threads/${T}/00000000000002-aaaa.json`, data: dup },
+    { pathname: `threads/${T}/00000000000002-bbbb.json`, data: dup },
+  ]);
+  assert.equal(t.messages.length, 2);
+});

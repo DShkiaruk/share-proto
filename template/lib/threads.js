@@ -25,7 +25,18 @@ export function assemble(events, root = '') {
   for (const [tid, evs] of byThread) {
     evs.sort((a, b) => (a.pathname < b.pathname ? -1 : 1));
     if (evs.some((e) => e.data.type === 'tomb')) continue;
-    const msgs = evs.filter((e) => e.data.type === 'msg').map((e) => e.data);
+    // Identical (at, author, role) messages are the same message written twice
+    // (a seed re-run, a retried request) — keep the first.
+    const seen = new Set();
+    const msgs = evs
+      .filter((e) => e.data.type === 'msg')
+      .map((e) => e.data)
+      .filter((m) => {
+        const k = `${m.at}|${m.author}|${m.role}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
     const firstMsg = msgs.find((m) => m.first);
     if (!firstMsg) continue;
     const states = evs.filter((e) => e.data.type === 'state');
