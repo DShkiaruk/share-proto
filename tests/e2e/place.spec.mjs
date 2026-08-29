@@ -28,7 +28,7 @@ test('a comment inside a dropdown gets a container + trail; closed → ghost pin
   expect(t.anchor.container?.name).toBe('Sort menu');
   expect(t.trail.length).toBeGreaterThanOrEqual(1);
   expect(t.trail.at(-1).txt).toBe('Sort');
-  expect(t.page).toBe('/#/home');
+  expect(t.page).toBe('/'); // fixture starts without a hash
 
   await page.keyboard.press('Escape'); // close popover
   await page.mouse.click(600, 700); // outside → menu closes
@@ -79,6 +79,8 @@ test('numbers are global and identical for both roles; sorting and filters work'
   const theirs = await apiGet(client, '/api/comments');
   expect(theirs.threads.map((t) => t.n)).toEqual([3]); // gaps for the client: same numbers for everyone
 
+  await designer.reload(); // the overlay polls every 25 s — pick up the client's thread now
+  await designer.waitForSelector('[data-fp-host]');
   await mouseClick(designer, inOverlay(designer, '.tb-btn').nth(1));
   await expect(inOverlay(designer, '.sb-row .num').first()).toHaveText('#3'); // newest first
   await inOverlay(designer, 'select.sort').selectOption('oldest');
@@ -97,6 +99,7 @@ test('H hides everything and the dot brings it back; J/K walk comments', async (
   await expect(inOverlay(page, '.pins')).toBeHidden();
   const dot = inOverlay(page, '.present-dot');
   await expect(dot).toBeVisible();
+  await page.waitForTimeout(150); // let the compositor commit a frame with the new element before hit-testing a click
   await mouseClick(page, dot);
   await expect(inOverlay(page, '.toolbar')).toBeVisible();
 

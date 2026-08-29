@@ -191,6 +191,14 @@
   root.append(clickLayer, pinsLayer, toolbar, sidebar);
   document.body.appendChild(host);
 
+  // Interacting with the overlay must not count as an "outside click" for the
+  // prototype's own menus and popovers — they would close before a comment
+  // could be anchored inside them. Our own document-level listeners run in
+  // the capture phase and are unaffected.
+  for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend']) {
+    host.addEventListener(type, (e) => e.stopPropagation());
+  }
+
   /* ---------- screen fingerprint ---------- */
 
   function appRoot() {
@@ -951,7 +959,6 @@
             proto: state.proto,
             page: currentPage(),
             trail: state.draft.trail,
-            page: location.pathname,
           });
           state.draft = null;
           draftPin?.remove();
@@ -1321,6 +1328,14 @@
   // Drive the prototype hop by hop, re-planning after every step: bad edges
   // happen (recorded on old builds, mis-attributed clicks) and a single one
   // must not kill the trip — ban it and route around from wherever we are.
+  // Refresh the screen label and pins right now (the mutation observer is
+  // debounced by 250 ms, too slow for navigation code that checks onThisScreen).
+  function syncScreen() {
+    state.screen = screenLabel();
+    state.screenLabel = state.screen;
+    renderPins();
+  }
+
   // Synthetic pointer sequence: many UI kits open menus on pointerdown, not click.
   function synthClick(target) {
     const r = target.getBoundingClientRect();
@@ -1374,7 +1389,7 @@
       toastSticky('Opening the state with this comment…');
       await replayTrail(t);
       clearSticky();
-      positionPins();
+      syncScreen(); // a reopened dialog may carry its own heading
     }
     if (locateAnchor(t.anchor).pos || !t.anchor?.container) return jumpToThread(t);
     armGuided(t, `Open “${t.anchor.container.name || 'the menu'}” — the comment will appear there · Esc to cancel`);
@@ -1385,12 +1400,24 @@
     if (state.presenting) togglePresent();
     if (state.pinsHidden) setPinsHidden(false);
     setSidebar(false);
-    if (!pageMatches(t.page)) {
+    const { path, hash } = splitPage(t.page || location.pathname);
+    if ((path || '/') !== location.pathname) {
+      // Another document: the deep-link boot on that page finishes the trip.
       toastSticky('Taking you to the comment…');
       location.href = deepLinkUrl(t);
       return;
     }
-    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t);
+    const onScreen = () => !t.screenLabel || labelsMatch(screenLabel(), t.screenLabel);
+    if (!onScreen() && t.page && hash !== location.hash) {
+      // Same document, another route: the hash is authoritative and free —
+      // no need to walk the learned graph (which may not know the way back).
+      toastSticky('Taking you to the comment…');
+      location.hash = hash;
+      await waitFor(onScreen, 3000);
+      clearSticky();
+      syncScreen(); // the mutation observer is debounced; onThisScreen() must see the new label now
+    }
+    if (!onScreen()) return autoNavigate(t);
     return openAtState(t);
   }
 
@@ -1696,6 +1723,7 @@
   let presentDot = null;
   function togglePresent() {
     state.presenting = !state.presenting;
+    state.presentToggles = (state.presentToggles || 0) + 1;
     if (state.presenting) {
       presentSaved = { sidebar: state.sidebar };
       closePopover();
@@ -1903,6 +1931,10 @@
       else refresh().then(() => setTimeout(go, 800));
     }
   }, 1200);
+
+  // Read-only automation hook: the map crawler reads the label through it and
+  // tests inspect state. Never used by the overlay itself.
+  window.__fp = { version: 2, label: screenLabel, get state() { return state; } };
 
   refresh().then(() => {
     syncLocalEdges();
