@@ -175,7 +175,7 @@ End your final message with this standout block (translated to the user's langua
 
 Then briefly, in prose:
 
-- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Threads sidebar lists everything; resolve with the check icon; H hides the toolbar.
+- How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back).
 - Roles: designers see all comments; the client sees only client comments (server-enforced).
 - To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
 - If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.

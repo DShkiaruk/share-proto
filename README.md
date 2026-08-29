@@ -50,7 +50,7 @@ The template is self-contained: append-only comment events in a private Blob sto
 
 ## How reviewers leave comments
 
-Sign in with a name + password (the password decides the role). Press **C** or hit Comment → click anywhere → type → Enter. The Threads sidebar lists everything: unread threads carry a blue dot, "Go to comment" navigates the prototype to the right screen by itself. **H** hides the toolbar. Reviewers can edit their own messages, copy a direct link to any comment, and comments left on an outdated build get an "Older version" badge.
+Sign in with a name + password (the password decides the role). Press **C** or hit Comment → click anywhere → type → Enter. Every comment gets a number (#1, #2…) that is the same for everyone, so "look at #7" works on a call. The Threads sidebar lists everything — sort by newest, oldest, unread or screen; designers can filter to client or team comments. Click a comment and the prototype takes you to it in one step: another page, another screen (the overlay learns the prototype's navigation from real clicks), even a comment left inside a dropdown or dialog — the state is reopened, and while it is closed a dashed ghost pin marks the button that opens it. **J**/**K** walk the comments, **H** hides everything for a clean presentation (a small dot in the corner brings it back). Reviewers can edit their own messages, copy a direct link to any comment, and comments left on an outdated build get an "Older version" badge.
 
 ## Limitations
 
