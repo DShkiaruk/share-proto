@@ -7,6 +7,7 @@ const local = { baseURL: 'http://localhost:4173', viewport: { width: 1280, heigh
 const projects = [
   { name: 'local-place', testMatch: /place\.spec\.mjs/, use: local },
   { name: 'local-media', testMatch: /media\.spec\.mjs/, use: local, dependencies: ['local-place'] },
+  { name: 'local-workflow', testMatch: /workflow\.spec\.mjs/, use: local, dependencies: ['local-media'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({

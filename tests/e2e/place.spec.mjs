@@ -93,7 +93,8 @@ test('numbers are global and identical for both roles; sorting and filters work'
   await mouseClick(designer, inOverlay(designer, '.tb-btn').nth(1));
   await expect(inOverlay(designer, '.sb-row .num').first()).toHaveText('#3'); // newest first
   await inOverlay(designer, 'select.sort').selectOption('oldest');
-  await expect(inOverlay(designer, '.sb-row .num').first()).toHaveText('#1');
+  // the client's fresh thread sits in "New for you" above the list for the first minute
+  await expect(inOverlay(designer, '.sb-row:not(.new) .num').first()).toHaveText('#1');
   await mouseClick(designer, inOverlay(designer, '.chip').filter({ hasText: 'Client' }));
   await expect(inOverlay(designer, '.sb-row')).toHaveCount(1);
   await expect(inOverlay(designer, '.pin')).toHaveCount(1);

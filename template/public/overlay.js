@@ -69,6 +69,15 @@
       '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
     ),
     eyeSmall: svg('<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
+    bug: svg(
+      '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>'
+    ),
+    help: svg('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'),
+    lightbulb: svg(
+      '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>'
+    ),
+    plus: svg('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+    history: svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>'),
     grip: svg(
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
@@ -93,6 +102,12 @@
     presenting: false, // H: everything hidden, a dot remains
     sort: localStorage.getItem('fp_sort') || 'newest',
     roleFilter: 'all', // designer-only: all | client | team
+    versions: [],
+    navAt: {},
+    versionFilter: null,
+    showVersions: false,
+    prevVisit: 0,
+    bootAt: 0,
   };
 
   const roleLabel = () => (state.role === 'designer' ? 'Designer' : 'Client');
@@ -101,6 +116,36 @@
   const myLabel = () => state.name || roleLabel();
   // A server that predates numbering (the Worker edition) sends no `n`.
   const numLabel = (t) => (Number.isInteger(t.n) ? `#${t.n}` : '');
+  const STATUS_LABEL = { open: 'Open', progress: 'In progress', done: 'Done', wont: 'Won’t do' };
+  const KIND_LABEL = { bug: 'Bug', question: 'Question', idea: 'Idea' };
+  const KIND_ICON = { bug: 'bug', question: 'help', idea: 'lightbulb' };
+  const EMOJI = ['👍', '✅', '❓', '👀'];
+  const statusOf = (t) => t.status || (t.resolved ? 'done' : 'open');
+  function kindIcon(t) {
+    if (!t.kind || !KIND_ICON[t.kind]) return null;
+    const k = el('span', `kind-ico k-${t.kind}`);
+    k.append(icon(KIND_ICON[t.kind]));
+    k.title = KIND_LABEL[t.kind];
+    return k;
+  }
+  // "New since my last visit" — per browser, like read state.
+  function isNew(t) {
+    if (!state.prevVisit) return false;
+    const me = myLabel();
+    const mine = (a, r) => a === me && r === state.role;
+    if (t.createdAt > state.prevVisit && !mine(t.author, t.authorRole)) return true;
+    if (t.messages.some((m) => m.at > state.prevVisit && !mine(m.author, m.role))) return true;
+    return (t.history || []).some((h) => h.at > state.prevVisit && h.author && h.author !== me);
+  }
+  function newScreens() {
+    if (!state.prevVisit) return [];
+    const seen = {};
+    for (const [key, at] of Object.entries(state.navAt || {})) {
+      for (const label of key.split('>')) seen[label] = Math.min(seen[label] ?? Infinity, at || Infinity);
+    }
+    return Object.entries(seen).filter(([, at]) => at > state.prevVisit).map(([l]) => l);
+  }
+  const withinNewWindow = () => Date.now() - (state.bootAt || 0) < 60000;
 
   /* ---------- DOM helpers ---------- */
 
@@ -744,12 +789,15 @@
           state.role = data.role;
           state.name = data.name || '';
           state.nav = data.nav || {};
+          state.navAt = data.navAt || {};
+          state.versions = data.versions || [];
           state.threads = data.threads;
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
-          const sig = JSON.stringify(
-            state.threads.map((t) => [t.id, lastAt(t), t.resolved, t.preview, t.messages.length, t.n])
-          );
+          const sig = JSON.stringify([
+            state.threads.map((t) => [t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.messages.length, t.n, JSON.stringify(t.messages.map((m) => m.reactions || 0))]),
+            state.versions.map((v) => [v.id, v.label]),
+          ]);
           if (sig !== lastSig || !lastSig) {
             lastSig = sig;
             renderAll();
@@ -888,7 +936,14 @@
   function renderToolbar() {
     btnMode.classList.toggle('on', state.mode);
     const open = state.threads.filter((t) => !t.resolved).length;
-    countBadge.textContent = open ? String(open) : '';
+    const fresh = state.threads.filter(isNew).length;
+    if (fresh && withinNewWindow()) {
+      countBadge.textContent = `${fresh} new`;
+      countBadge.classList.add('new-badge');
+    } else {
+      countBadge.textContent = open ? String(open) : '';
+      countBadge.classList.remove('new-badge');
+    }
     btnThreads.classList.toggle('has-unread', state.threads.some(isUnread));
     btnEye.replaceChildren(icon(state.pinsHidden ? 'eyeOff' : 'eye'));
     btnEye.title = state.pinsHidden ? 'Show comment pins' : 'Hide comment pins';
@@ -907,9 +962,10 @@
   function threadsInView() {
     return state.threads.filter(
       (t) =>
-        (state.filter === 'resolved' ? t.resolved : !t.resolved) &&
+        (state.filter === 'all' || statusOf(t) === state.filter) &&
         (state.roleFilter === 'all' ||
-          (state.roleFilter === 'client' ? t.authorRole === 'client' : t.authorRole === 'designer'))
+          (state.roleFilter === 'client' ? t.authorRole === 'client' : t.authorRole === 'designer')) &&
+        (!state.versionFilter || t.proto === state.versionFilter)
     );
   }
   // Every thread in view gets a pin element; positionPins() shows it only
@@ -1020,6 +1076,7 @@
   /* ---------- popover ---------- */
 
   function closePopover() {
+    closeStatusMenu();
     popover?.remove();
     popover = null;
     state.active = null;
@@ -1177,6 +1234,7 @@
             proto: state.proto,
             page: currentPage(),
             trail: state.draft.trail,
+            kind: state.draft.kind || null,
             images: images(),
           });
           // Picture of where this was left — after the post, never blocking it.
@@ -1195,13 +1253,155 @@
         }
       },
     });
-    popover.appendChild(row);
+    // Optional kind — Bug / Question / Idea.
+    const chips = el('div', 'kind-chips');
+    for (const k of Object.keys(KIND_LABEL)) {
+      const b = el('button', 'kind-chip', KIND_LABEL[k]);
+      b.prepend(icon(KIND_ICON[k]));
+      b.addEventListener('click', () => {
+        state.draft.kind = state.draft.kind === k ? null : k;
+        chips.querySelectorAll('.kind-chip').forEach((c) => c.classList.toggle('on', c === b && state.draft.kind === k));
+        ta.focus();
+      });
+      chips.appendChild(b);
+    }
+    popover.append(chips, row);
     root.appendChild(popover);
     placePopover(state.draft.x, state.draft.y);
     ta.focus();
   }
 
+  // Status menu: clients toggle Open/Done; designers get all four statuses,
+  // a required reason for "Won't do", and the comment kind.
+  let statusMenu = null;
+  function closeStatusMenu() {
+    statusMenu?.remove();
+    statusMenu = null;
+  }
+  async function postThread(body, okToast) {
+    try {
+      await api('POST', body);
+      await refresh();
+      const live = state.threads.find((x) => x.id === body.threadId);
+      if (live) openThread(live.id, pinEls.get(live.id));
+      if (okToast) toast(okToast);
+    } catch {
+      toast('Couldn’t update — try again');
+    }
+  }
+  function toggleStatusMenu(t, anchorBtn) {
+    if (statusMenu) return closeStatusMenu();
+    statusMenu = el('div', 'status-menu');
+    statusMenu.setAttribute('role', 'menu');
+    const options = state.role === 'designer' ? ['open', 'progress', 'done', 'wont'] : ['open', 'done'];
+    for (const st of options) {
+      const b = el('button', `s-${st}` + (statusOf(t) === st ? ' on' : ''), STATUS_LABEL[st]);
+      b.setAttribute('role', 'menuitem');
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (st === 'wont') return askWontNote(t);
+        closeStatusMenu();
+        postThread({ action: 'status', threadId: t.id, status: st }, `Marked as ${STATUS_LABEL[st]}`);
+      });
+      statusMenu.appendChild(b);
+    }
+    if (state.role === 'designer') {
+      statusMenu.appendChild(el('div', 'menu-label', 'Kind'));
+      const kinds = el('div', 'kind-row');
+      for (const k of [...Object.keys(KIND_LABEL), null]) {
+        const b = el('button', 'kind-chip' + (t.kind === k ? ' on' : ''), k ? KIND_LABEL[k] : 'None');
+        if (k) b.prepend(icon(KIND_ICON[k]));
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeStatusMenu();
+          postThread({ action: 'kind', threadId: t.id, kind: k });
+        });
+        kinds.appendChild(b);
+      }
+      statusMenu.appendChild(kinds);
+    }
+    popover.appendChild(statusMenu);
+    const r = anchorBtn.getBoundingClientRect();
+    const pr = popover.getBoundingClientRect();
+    statusMenu.style.top = `${r.bottom - pr.top + 6}px`;
+    statusMenu.style.right = `${Math.max(8, pr.right - r.right)}px`;
+  }
+  function askWontNote(t) {
+    statusMenu.replaceChildren(el('div', 'menu-label', 'Why won’t this be done?'));
+    const wrap = el('div', 'wont-note');
+    const ta = el('textarea');
+    ta.placeholder = 'Short reason the client will see';
+    ta.maxLength = 200;
+    const save = el('button', 'wont-save', 'Save');
+    save.disabled = true;
+    ta.addEventListener('input', () => (save.disabled = !ta.value.trim()));
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey && ta.value.trim()) {
+        e.preventDefault();
+        save.click();
+      }
+    });
+    save.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const note = ta.value.trim();
+      if (!note) return;
+      closeStatusMenu();
+      postThread({ action: 'status', threadId: t.id, status: 'wont', note }, 'Marked as Won’t do');
+    });
+    wrap.append(ta, save);
+    statusMenu.appendChild(wrap);
+    ta.focus();
+  }
+  function sysLine(h) {
+    const who = h.author || 'Someone';
+    const text =
+      h.status === 'wont'
+        ? `${who} won’t do this${h.note ? `: ${h.note}` : ''}`
+        : `${who} marked as ${STATUS_LABEL[h.status] || h.status}`;
+    const line = el('div', 'sys-line', text);
+    line.title = new Date(h.at).toLocaleString();
+    return line;
+  }
+  function reactionsRow(t, m) {
+    const row = el('div', 'reacts');
+    const me = myLabel();
+    for (const [emoji, who] of Object.entries(m.reactions || {})) {
+      const mine = who.includes(me);
+      const chip = el('button', 'react-chip' + (mine ? ' mine' : ''), `${emoji} ${who.length}`);
+      chip.title = who.join(', ');
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        postThread({ action: 'react', threadId: t.id, at: m.at, emoji, on: !mine });
+      });
+      row.appendChild(chip);
+    }
+    const add = el('button', 'react-add');
+    add.append(icon('plus'));
+    add.title = 'React';
+    add.setAttribute('aria-label', 'Add a reaction');
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = row.querySelector('.react-palette');
+      if (open) return open.remove();
+      const pal = el('div', 'react-palette');
+      for (const emoji of EMOJI) {
+        const b = el('button', null, emoji);
+        b.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const mine = (m.reactions?.[emoji] || []).includes(me);
+          postThread({ action: 'react', threadId: t.id, at: m.at, emoji, on: !mine });
+        });
+        pal.appendChild(b);
+      }
+      row.appendChild(pal);
+    });
+    row.appendChild(add);
+    return row;
+  }
+
   function openThread(id, pinEl) {
+    closeStatusMenu();
     closePopover();
     const t = state.threads.find((x) => x.id === id);
     if (!t) return;
@@ -1214,11 +1414,14 @@
 
     const head = el('div', 'head');
     const who = el('div', 'who');
+    const ki = kindIcon(t);
+    if (ki) who.appendChild(ki);
     who.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
     const rb = roleBadge(t);
     if (rb) who.appendChild(el('span', 'badge', rb));
     if (t.proto && state.proto && t.proto !== state.proto) {
-      who.appendChild(el('span', 'badge old-version', 'Older version'));
+      const v = state.versions.find((x) => x.id === t.proto);
+      who.appendChild(el('span', 'badge old-version', v?.label ? `Older version · ${v.label}` : 'Older version'));
     }
     const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
     const at = ordered.findIndex((x) => x.id === t.id);
@@ -1240,24 +1443,14 @@
     });
     head.appendChild(linkBtn);
 
-    const resolveBtn = el('button', 'icon-btn' + (t.resolved ? ' done' : ''));
-    resolveBtn.append(icon('check'));
-    resolveBtn.title = t.resolved ? 'Reopen' : 'Resolve';
-    resolveBtn.setAttribute('aria-label', resolveBtn.title);
-    resolveBtn.addEventListener('click', async () => {
-      try {
-        // Re-read the thread from current state: `t` may be an orphan if a
-        // background poll replaced state.threads while the popover was open.
-        const live = state.threads.find((x) => x.id === t.id) || t;
-        const { thread } = await api('POST', { action: 'resolve', threadId: t.id, resolved: !live.resolved });
-        closePopover();
-        await refresh();
-        toast(thread.resolved ? 'Marked as resolved' : 'Reopened');
-      } catch {
-        toast('Couldn’t update — try again');
-      }
+    const statusBtn = el('button', `status s-${statusOf(t)}`, STATUS_LABEL[statusOf(t)]);
+    statusBtn.title = 'Change status';
+    statusBtn.setAttribute('aria-label', `Status: ${STATUS_LABEL[statusOf(t)]} — change`);
+    statusBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleStatusMenu(t, statusBtn);
     });
-    head.appendChild(resolveBtn);
+    head.appendChild(statusBtn);
 
     const canDelete = state.role === 'designer' || (t.authorRole === state.role && t.author === myLabel());
     if (canDelete) {
@@ -1317,7 +1510,17 @@
     }
 
     const msgs = el('div', 'messages');
-    for (const m of t.messages) {
+    // Messages and status changes, in time order (the implicit initial "open" is not a change).
+    const items = [
+      ...t.messages.map((m) => ({ at: m.at, m })),
+      ...(t.history || []).filter((h, i, arr) => !(i === 0 && h.status === 'open')).map((h) => ({ at: h.at, h })),
+    ].sort((a, b) => a.at - b.at);
+    for (const item of items) {
+      if (item.h) {
+        msgs.appendChild(sysLine(item.h));
+        continue;
+      }
+      const m = item.m;
       const box = el('div', 'msg');
       const meta = el('div', 'meta');
       meta.append(
@@ -1374,6 +1577,7 @@
         }
         box.appendChild(imgs);
       }
+      box.appendChild(reactionsRow(t, m));
       msgs.appendChild(box);
     }
     popover.appendChild(msgs);
@@ -1833,11 +2037,83 @@
     if (open) renderSidebar();
   }
 
+  const shortVersion = (id) => String(id).replace(/^W\//, '').replace(/"/g, '').slice(0, 8);
+  function renderVersions() {
+    const wrap = el('div', 'versions');
+    const list = state.versions.slice().sort((a, b) => b.firstSeen - a.firstSeen);
+    if (!list.length) wrap.appendChild(el('div', 'sb-empty', 'No versions recorded yet — they appear as builds are opened.'));
+    for (const v of list) {
+      const row = el('div', 'ver-row' + (v.id === state.proto ? ' current' : ''));
+      const label = el('button', 'ver-label', v.label || shortVersion(v.id));
+      label.title = state.role === 'designer' ? 'Click to name this version' : v.id;
+      if (state.role === 'designer') {
+        label.addEventListener('click', () => {
+          const input = el('input', 'ver-input');
+          input.value = v.label || '';
+          input.placeholder = 'Version name';
+          input.maxLength = 60;
+          label.replaceWith(input);
+          input.focus();
+          const done = async () => {
+            const val = input.value.trim();
+            if (val === (v.label || '')) return renderSidebar();
+            try {
+              await api('POST', { action: 'version-label', id: v.id, label: val });
+              await refresh();
+            } catch {
+              toast('Couldn’t save — try again');
+            }
+            renderSidebar();
+          };
+          input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') done();
+            if (e.key === 'Escape') renderSidebar();
+          });
+          input.addEventListener('blur', done);
+        });
+      }
+      const count = state.threads.filter((t) => t.proto === v.id).length;
+      const meta = el('div', 'ver-meta', `${new Date(v.firstSeen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${count} ${count === 1 ? 'comment' : 'comments'}${v.id === state.proto ? ' · current' : ''}`);
+      const use = el('button', 'ver-use', 'Show comments');
+      use.addEventListener('click', () => {
+        state.versionFilter = v.id;
+        state.showVersions = false;
+        state.filter = 'all';
+        renderSidebar();
+        renderPins();
+      });
+      row.append(label, meta, use);
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
   function renderSidebar() {
     sidebar.replaceChildren();
 
     const head = el('div', 'sb-head');
-    head.appendChild(el('h2', null, 'Comments'));
+    head.appendChild(el('h2', null, state.showVersions ? 'Versions' : 'Comments'));
+    const verBtn = el('button', 'icon-btn sb-versions' + (state.showVersions ? ' on' : ''));
+    verBtn.append(icon('history'));
+    verBtn.title = state.showVersions ? 'Back to comments' : 'Prototype versions';
+    verBtn.setAttribute('aria-label', verBtn.title);
+    verBtn.addEventListener('click', async () => {
+      if (!state.showVersions) await refresh(); // labels may have changed since the last poll
+      state.showVersions = !state.showVersions;
+      renderSidebar();
+    });
+    head.appendChild(verBtn);
+    if (state.showVersions) {
+      const closeV = el('button', 'icon-btn');
+      closeV.append(icon('close'));
+      closeV.setAttribute('aria-label', 'Close');
+      closeV.addEventListener('click', () => setSidebar(false));
+      head.append(closeV);
+      sidebar.appendChild(head);
+      sidebar.appendChild(renderVersions());
+      return;
+    }
     if (state.threads.some(isUnread)) {
       const mark = el('button', 'mark-read', 'Mark all read');
       mark.addEventListener('click', () => {
@@ -1854,9 +2130,10 @@
     sidebar.appendChild(head);
 
     const controls = el('div', 'sb-controls');
-    const seg = el('div', 'seg');
-    for (const f of ['open', 'resolved']) {
-      const b = el('button', state.filter === f ? 'on' : '', f === 'open' ? 'Open' : 'Resolved');
+    const seg = el('div', 'seg status-seg');
+    for (const f of ['open', 'progress', 'done', 'wont', 'all']) {
+      const b = el('button', state.filter === f ? 'on' : '', f === 'all' ? 'All' : STATUS_LABEL[f]);
+      b.title = f === 'all' ? 'All statuses' : STATUS_LABEL[f];
       b.addEventListener('click', () => {
         state.filter = f;
         renderSidebar();
@@ -1895,15 +2172,35 @@
     }
 
     const list = el('div', 'sb-list');
+    if (state.versionFilter) {
+      const v = state.versions.find((x) => x.id === state.versionFilter);
+      const chip = el('button', 'filter-chip', `Version: ${v?.label || shortVersion(state.versionFilter)} ×`);
+      chip.addEventListener('click', () => {
+        state.versionFilter = null;
+        renderSidebar();
+        renderPins();
+      });
+      list.appendChild(chip);
+    }
     const match = threadsInView();
+    const fresh = match.filter(isNew);
+    if (fresh.length && withinNewWindow()) {
+      list.appendChild(el('div', 'sb-group', 'New for you'));
+      const screens = newScreens();
+      if (screens.length) list.appendChild(el('div', 'sb-note', `New screens: ${screens.join(', ')}`));
+    }
 
     const addRows = (items, label) => {
       if (!items.length) return;
       if (label) list.appendChild(el('div', 'sb-group', label));
       for (const t of sortThreads(items)) {
-        const row = el('button', 'sb-row' + (t.resolved ? ' resolved' : '') + (isUnread(t) ? ' unread' : ''));
+        const row = el('button', 'sb-row' + (t.resolved ? ' resolved' : '') + (isUnread(t) ? ' unread' : '') + (isNew(t) ? ' new' : ''));
         const meta = el('div', 'meta');
+        const ki = kindIcon(t);
+        if (ki) meta.appendChild(ki);
         meta.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
+        const st = statusOf(t);
+        if (st !== 'open') meta.appendChild(el('span', `status-tag s-${st}`, STATUS_LABEL[st]));
         const rb = roleBadge(t);
         if (rb) meta.appendChild(el('span', 'badge', rb));
         if (t.resolved) {
@@ -1940,7 +2237,17 @@
       }
     };
 
-    if (state.sort === 'screen') {
+    if (fresh.length && withinNewWindow()) {
+      // "New for you" first (its group label was added above), then everything else.
+      for (const t of sortThreads(fresh)) addRows([t], null);
+      const rest = match.filter((t) => !isNew(t));
+      if (state.sort === 'screen') {
+        addRows(rest.filter(onThisScreen), 'On this screen');
+        addRows(rest.filter((t) => !onThisScreen(t)), 'Other screens');
+      } else {
+        addRows(rest, rest.length ? 'Everything else' : null);
+      }
+    } else if (state.sort === 'screen') {
       addRows(match.filter(onThisScreen), 'On this screen');
       addRows(match.filter((t) => !onThisScreen(t)), 'Other screens');
     } else {
@@ -2093,6 +2400,7 @@
     'pointerdown',
     (e) => {
       if (hoverCard && !e.composedPath().includes(hoverCard)) hidePreviewCard();
+      if (statusMenu && !e.composedPath().includes(statusMenu)) closeStatusMenu();
       if (!popover && !state.draft) return;
       if (e.composedPath().includes(host)) return;
       if (state.draft) cancelDraft();
@@ -2198,14 +2506,34 @@
 
   // Prototype version = hash of the served page; threads remember the version
   // they were left on, so updated prototypes show an "Older version" badge.
-  fetch('/', { cache: 'no-store' })
-    .then((r) => r.text())
-    .then((html) => {
-      let h = 5381;
-      for (let i = 0; i < html.length; i++) h = ((h << 5) + h + html.charCodeAt(i)) >>> 0;
-      state.proto = 'v' + h.toString(36);
-    })
-    .catch(() => {});
+  // The ETag of the served page identifies the build cheaply (no download);
+  // fall back to hashing the HTML when the server sends none. Register it so
+  // the Versions panel knows when each build was first seen.
+  (async () => {
+    try {
+      const head = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store' });
+      const tag = head.headers.get('etag');
+      if (tag) state.proto = tag.replace(/^W\//, '').replace(/"/g, '').slice(0, 80);
+      else {
+        const html = await (await fetch(location.pathname, { cache: 'no-store' })).text();
+        let h = 5381;
+        for (let i = 0; i < html.length; i++) h = ((h << 5) + h + html.charCodeAt(i)) >>> 0;
+        state.proto = 'v' + h.toString(36);
+      }
+      await api('POST', { action: 'version', id: state.proto });
+    } catch {
+      /* offline or embed without HEAD — versions stay unknown */
+    }
+  })();
+
+  // "New since my last visit" window: remember when the previous visit started.
+  try {
+    state.prevVisit = Number(localStorage.getItem('fp_last_visit') || 0);
+    localStorage.setItem('fp_last_visit', String(Date.now()));
+  } catch {
+    state.prevVisit = 0;
+  }
+  state.bootAt = Date.now();
 
   // Deep link: /?comment=<id> — strip it from the URL immediately (a
   // reload-teleport must not re-trigger it) and jump after boot.
