@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
+  assignNumbers, nextNumber, sanitizeTrail,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -100,4 +101,51 @@ test('assemble keeps one copy of a message written twice under different pathnam
     { pathname: `threads/${T}/00000000000002-bbbb.json`, data: dup },
   ]);
   assert.equal(t.messages.length, 2);
+});
+
+test('assignNumbers keeps valid numbers, fills gaps in createdAt order, resolves collisions to the later thread', () => {
+  const out = assignNumbers([
+    { id: 'a', createdAt: 1, n: 1 },
+    { id: 'b', createdAt: 2 },            // legacy → 2
+    { id: 'c', createdAt: 3, n: 4 },
+    { id: 'd', createdAt: 4, n: 4 },      // collision → next free (3)
+    { id: 'e', createdAt: 5, n: 0 },      // invalid → next free (5)
+  ]);
+  assert.deepEqual(Object.fromEntries(out.map((t) => [t.id, t.n])), { a: 1, b: 2, c: 4, d: 3, e: 5 });
+});
+
+test('nextNumber is max+1 and starts at 1', () => {
+  assert.equal(nextNumber([]), 1);
+  assert.equal(nextNumber([{ n: 3 }, { n: 7 }, {}]), 8);
+});
+
+test('sanitizeTrail caps to 8 steps, drops junk, rejects oversized trails', () => {
+  const step = (i) => ({ anchor: { path: `p${i}` }, txt: `t${i}` });
+  const ten = Array.from({ length: 10 }, (_, i) => step(i));
+  const out = sanitizeTrail([...ten, 'junk', { txt: 'no anchor' }]);
+  assert.equal(out.length, 8);
+  assert.equal(out[0].txt, 't2');
+  assert.deepEqual(sanitizeTrail('nope'), []);
+  assert.deepEqual(sanitizeTrail([{ anchor: { path: 'x'.repeat(7000) }, txt: null }]), []);
+});
+
+test('assemble exposes n and trail from the creating event and numbers legacy threads', () => {
+  const T2 = '22222222-2222-4222-8222-222222222222';
+  const withN = ev(T2, 5, {
+    type: 'msg', at: 5, author: 'Bob', role: 'designer', text: 'x',
+    first: { authorRole: 'designer', screen: 'S', screenLabel: 'Home', anchor: { path: 'body' }, n: 7, trail: [{ anchor: { path: 'b' }, txt: 'Open' }] },
+  });
+  const threads = assemble([first(T, 1), withN]);
+  const legacy = threads.find((t) => t.id === T);
+  const numbered = threads.find((t) => t.id === T2);
+  assert.equal(numbered.n, 7);
+  assert.deepEqual(numbered.trail, [{ anchor: { path: 'b' }, txt: 'Open' }]);
+  assert.equal(legacy.n, 1);
+  assert.deepEqual(legacy.trail, []);
+});
+
+test('applyCreate numbers the new thread and repairs a racing duplicate', () => {
+  const base = [{ id: 'a', createdAt: 1, n: 1, messages: [] }];
+  const out = applyCreate(base, { id: 'b', createdAt: 2, n: 1, messages: [] });
+  assert.deepEqual(out.map((t) => [t.id, t.n]), [['a', 1], ['b', 2]]);
 });

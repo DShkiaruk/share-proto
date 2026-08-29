@@ -10,6 +10,44 @@ export const clean = (str, max) => String(str || '').trim().slice(0, max);
 
 export const canSee = (role, thread) => role === 'designer' || thread.authorRole === 'client';
 
+// Global comment numbers. Valid unique numbers are kept; missing or duplicate
+// ones get the next free integer in createdAt order (the later thread loses a
+// collision). Called on every assemble() and applyCreate(), so a rebuild from
+// events and a live patch agree.
+export function assignNumbers(threads) {
+  const sorted = threads.slice().sort((a, b) => a.createdAt - b.createdAt);
+  const used = new Set();
+  const out = new Map();
+  for (const t of sorted) {
+    if (Number.isInteger(t.n) && t.n > 0 && !used.has(t.n)) {
+      used.add(t.n);
+      out.set(t.id, t.n);
+    }
+  }
+  let next = 1;
+  for (const t of sorted) {
+    if (out.has(t.id)) continue;
+    while (used.has(next)) next++;
+    used.add(next);
+    out.set(t.id, next);
+  }
+  return threads.map((t) => (out.get(t.id) === t.n ? t : { ...t, n: out.get(t.id) }));
+}
+
+export const nextNumber = (threads) =>
+  threads.reduce((m, t) => Math.max(m, Number.isInteger(t.n) ? t.n : 0), 0) + 1;
+
+// The in-screen clicks that produced the commented state (opened a menu, a
+// dialog…). Replayed by "Go to comment". Untrusted input → shape-checked.
+export function sanitizeTrail(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = raw
+    .filter((s) => s && typeof s === 'object' && s.anchor && typeof s.anchor === 'object')
+    .slice(-8)
+    .map((s) => ({ anchor: s.anchor, txt: typeof s.txt === 'string' ? s.txt.slice(0, 60) : null }));
+  return JSON.stringify(out).length > 6000 ? [] : out;
+}
+
 export function assemble(events, root = '') {
   const byThread = new Map();
   for (const { pathname, data } of events) {
@@ -58,6 +96,8 @@ export function assemble(events, root = '') {
       anchor: firstMsg.first.anchor,
       proto: firstMsg.first.proto || null,
       page: firstMsg.first.page || null,
+      n: Number.isInteger(firstMsg.first.n) ? firstMsg.first.n : null,
+      trail: sanitizeTrail(firstMsg.first.trail),
       // v1 read `.resolved` off the {pathname, data} wrapper → always false after a
       // rebuild from events; the state lives on `.data`.
       resolved: states.length ? Boolean(states.at(-1).data.resolved) : false,
@@ -65,11 +105,11 @@ export function assemble(events, root = '') {
     });
   }
   threads.sort((a, b) => a.createdAt - b.createdAt);
-  return threads;
+  return assignNumbers(threads);
 }
 
 export const applyCreate = (threads, thread) =>
-  threads.some((t) => t.id === thread.id) ? threads : [...threads, thread];
+  threads.some((t) => t.id === thread.id) ? threads : assignNumbers([...threads, thread]);
 
 export const applyReply = (threads, tid, msg) =>
   threads.map((t) =>

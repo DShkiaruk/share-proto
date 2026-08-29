@@ -1,5 +1,6 @@
 import {
   clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, navPatch,
+  nextNumber, sanitizeTrail,
 } from '../lib/threads.js';
 import * as storage from '../lib/storage.js';
 import { createStateStore } from '../lib/state.js';
@@ -80,14 +81,21 @@ export default async function handler(req, res) {
   if (action === 'create') {
     const text = clean(body.text, MAX_TEXT);
     if (!text) return res.status(400).json({ error: 'Missing text' });
+    const anchor = body.anchor && typeof body.anchor === 'object' ? body.anchor : null;
+    if (JSON.stringify(anchor || {}).length > 4000) return res.status(400).json({ error: 'Anchor too large' });
     const tid = uuid();
+    // The number is taken from the state we can see now and persisted on the
+    // event; assignNumbers() in the patch (and in any rebuild) repairs a race.
+    const { state: before } = await store.loadState(root);
     const first = {
       authorRole: role,
       screen: clean(body.screen, 64),
       screenLabel: clean(body.screenLabel, 120),
-      anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
+      anchor,
       proto: clean(body.proto, 64) || null,
-      page: clean(body.page, 200) || null,
+      page: clean(body.page, 300) || null,
+      n: nextNumber(before.threads),
+      trail: sanitizeTrail(body.trail),
     };
     const thread = {
       id: tid,

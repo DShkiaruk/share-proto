@@ -30,6 +30,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
+const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail } = await import('./lib/threads.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -48,8 +49,6 @@ const MAX_NAME = 40;
 const NAV_CAP = 500;
 const SIXTY_DAYS_S = 60 * 24 * 60 * 60;
 
-const clean = (str, max) => String(str || '').trim().slice(0, max);
-const canSee = (role, thread) => role === 'designer' || thread.authorRole === 'client';
 
 /* ---------- secrets: generated on first run, env vars override ---------- */
 
@@ -98,6 +97,8 @@ try {
 } catch {
   /* first run */
 }
+// Numbers are global per room; legacy threads get theirs in createdAt order.
+for (const room of Object.values(store.rooms)) room.threads = assignNumbers(room.threads || []);
 
 function roomStore(room) {
   const key = room || '_';
@@ -246,13 +247,15 @@ async function apiComments(req, res, session) {
       screenLabel: clean(body.screenLabel, 120),
       anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
       proto: clean(body.proto, 64) || null,
-      page: clean(body.page, 200) || null,
+      page: clean(body.page, 300) || null,
+      n: nextNumber(S.threads),
+      trail: sanitizeTrail(body.trail),
       resolved: false,
       messages: [{ author, role, text, at: now }],
     };
-    S.threads.push(thread);
+    S.threads = assignNumbers([...S.threads, thread]);
     await persist();
-    return json(res, 200, { thread });
+    return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
   }
 
   const tid = String(body.threadId || '');

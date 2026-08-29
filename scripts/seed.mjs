@@ -26,13 +26,14 @@ async function write(pathname, payload) {
   }
 }
 
-for (const t of data.threads) {
+for (const [i, t] of data.threads.entries()) {
   const [head, ...rest] = t.messages;
   await write(`${root}threads/${t.id}/${ts(t.createdAt)}-seed-0.json`, {
     type: 'msg', at: t.createdAt, author: head.author, role: head.role, text: head.text,
     first: {
       authorRole: t.authorRole, screen: t.screen, screenLabel: t.screenLabel, anchor: t.anchor,
       proto: t.proto || null, page: t.page || null,
+      n: Number.isInteger(t.n) ? t.n : i + 1, trail: Array.isArray(t.trail) ? t.trail : [],
     },
   });
   for (const [i, m] of rest.entries()) {
