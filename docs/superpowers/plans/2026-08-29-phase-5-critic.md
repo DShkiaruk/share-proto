@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-share-proto-v2-design.md` — §14 (Phase 5), §11, §13.
 
+## Execution notes (2026-08-29)
+
+Done and released. Notes:
+- The Phase 4 and whole-diff reviews ran **in-thread**, not as subagents: the org hit its monthly spend limit mid-phase and agent dispatch returned 429. Findings were small — the crawler left the overlay hidden if a screenshot threw (fixed with try/finally); scans for impure `mutate` patches, missing `X-Store-Path` headers, console noise, TODOs and dead identifiers in the shipped template came back empty; SKILL.md reads end to end and every file it references exists.
+- Visual QA (`tests/visual/shots.mjs`) found four real defects, all fixed: the thread header squeezed the author name to two characters and clipped the position counter (split into identity + state rows, popover 340 px); the five status filters truncated in a 320 px sidebar (344 px, tighter padding); 11–12 px secondary text failed AA on tinted surfaces (`--muted-fg-2`); map shots included the comment UI (overlay hidden while shooting).
+- One "contrast failure" was a bug in the probe, not the CSS: `color-mix()` backgrounds compute to `color(srgb …)`, which the parser missed, so the map panel read as black. Fixed in the probe; final run 102 samples, 0 failures, 0 clipped elements, dark chips verified by computed style rather than by eye — a screenshot read at 1× had suggested the opposite.
+- The overlay's font is now the platform UI stack. It declared Geist and never loaded it, so it was already rendering as system-ui in most prototypes; the design detector flagged the same line independently.
+- Live cut-over of the client deployment was deliberately **not** performed — `docs/UPGRADE.md` is the recipe, the decision is Dmytro's.
+- Released: `v1` tags the last v1 code (4693bf8), `main` fast-forwarded to the v2 tip, `v2.0` tags the release, branch `v2` kept.
+
 ## Global Constraints
 
 - The live client deployment (`filepig-prototype-sigma`) is **not** cut over in this plan — it gets a recipe, not a deploy (client-facing change = Dmytro's call).
