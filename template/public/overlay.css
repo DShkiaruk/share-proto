@@ -1584,6 +1584,9 @@
 .map-node {
   position: absolute;
   width: 240px;
+  /* Fixed, and equal to NODE_H in the overlay: the map lays cards out by
+     arithmetic, so a card that grows overlaps its neighbour. */
+  min-height: 244px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1634,6 +1637,7 @@
 .map-act svg { width: 12px; height: 12px; }
 .map-act:hover { color: var(--ink); border-color: var(--muted-fg-2); }
 .map-act:disabled { opacity: 0.5; }
+.map-node:has(.compose) { z-index: 2; } /* the composer may outgrow the card */
 .map-node .compose { border-top: 1px solid var(--border); }
 .map-node .compose textarea { font-size: 12px; }
 .map-meta { display: flex; align-items: center; gap: 8px; }

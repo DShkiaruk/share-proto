@@ -30,7 +30,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyResolve, applyKind, applyReact, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
+const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
@@ -430,6 +430,11 @@ async function apiComments(req, res, session) {
     const target = Number(body.at);
     if (!EMOJI.includes(emoji) || !thread.messages.some((m) => m.at === target)) return json(res, 400, { error: 'Bad reaction' });
     S.threads = applyReact(S.threads, tid, { target, emoji, on: Boolean(body.on), author });
+  } else if (action === 'trail') {
+    const trail = sanitizeTrail(body.trail);
+    if (!trail.length) return json(res, 400, { error: 'Empty trail' });
+    if (thread.trail?.length) return json(res, 200, { thread });
+    S.threads = applyTrail(S.threads, tid, trail);
   } else if (action === 'delete') {
     const own = thread.authorRole === role && thread.author === author;
     if (role !== 'designer' && !own) return json(res, 403, { error: 'Not allowed' });

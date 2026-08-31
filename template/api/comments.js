@@ -1,6 +1,6 @@
 import {
   clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyKind, applyReact, STATUSES, KINDS, EMOJI,
+  nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../lib/threads.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
@@ -313,6 +313,14 @@ export default async function handler(req, res) {
     }
     await storage.appendEvent(eventPath(tid), { type: 'react', at: now, target, emoji, on, author, role });
     patch = (s) => ({ threads: applyReact(s.threads, tid, { target, emoji, on, author }) });
+  } else if (action === 'trail') {
+    // Recovery data, not content: whoever can see the thread may teach it the
+    // way back, and only once — a thread that knows it is never re-taught.
+    const trail = sanitizeTrail(body.trail);
+    if (!trail.length) return res.status(400).json({ error: 'Empty trail' });
+    if (existing.trail?.length) return res.status(200).json({ thread: existing });
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, trail });
+    patch = (s) => ({ threads: applyTrail(s.threads, tid, trail) });
   } else if (action === 'delete') {
     const own = existing.authorRole === role && existing.author === author;
     if (role !== 'designer' && !own) return res.status(403).json({ error: 'Not allowed' });

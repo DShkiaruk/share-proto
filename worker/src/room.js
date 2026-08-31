@@ -17,7 +17,7 @@
 
 import {
   clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage,
-  applyStatus, applyResolve, applyKind, applyReact, STATUSES, KINDS, EMOJI,
+  applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../../template/lib/threads.js';
 import { applyShot, applyMapMeta, applyVersionEvent, labelKey } from '../../template/lib/state.js';
 import { parseImages, parseImageDataUrl } from '../../template/lib/media.js';
@@ -398,6 +398,11 @@ export class Room {
       const target = Number(body.at);
       if (!EMOJI.includes(emoji) || !thread.messages.some((m) => m.at === target)) return err(400, 'Bad reaction');
       this.threads = applyReact(this.threads, tid, { target, emoji, on: Boolean(body.on), author });
+    } else if (action === 'trail') {
+      const trail = sanitizeTrail(body.trail);
+      if (!trail.length) return err(400, 'Empty trail');
+      if (thread.trail?.length) return ok({ thread });
+      this.threads = applyTrail(this.threads, tid, trail);
     } else if (action === 'delete') {
       const own = thread.authorRole === role && thread.author === author;
       if (role !== 'designer' && !own) return err(403, 'Not allowed');

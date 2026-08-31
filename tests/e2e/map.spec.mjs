@@ -168,6 +168,16 @@ test('a screen can be commented on from the map itself', async ({ page }) => {
   );
   expect(pinned, 'a comment about the screen has no spot to pin').toBe(false);
   await page.keyboard.press('Escape');
+
+  // In the full list it behaves like any other comment: from another screen it
+  // takes you to its own, and opens there.
+  await page.goto('/#/home');
+  await page.waitForFunction(() => window.__fp?.state.screen === 'Home');
+  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'this screen does not belong' }).first());
+  await expect(page).toHaveURL(/#\/settings/, { timeout: 15_000 });
+  await expect(inOverlay(page, '.popover .msg .text').filter({ hasText: 'this screen does not belong' })).toBeVisible({ timeout: 10_000 });
+  await page.keyboard.press('Escape');
 });
 
 // Asked of the live deployment: "I don't want No picture at all — why can't we
@@ -237,4 +247,65 @@ test('a comment whose element is gone opens where it can be read, not in the cor
     (id) => fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', threadId: id }) }),
     res.id
   );
+});
+
+// The card grew when it gained buttons and started sitting on the card below —
+// the layout places cards by arithmetic, so its step has to match their height.
+test('no two cards on the map overlap', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  // A column tall enough to catch a step that is too small.
+  for (const to of ['Alpha', 'Beta', 'Gamma', 'Delta']) {
+    await apiPost(page, { action: 'edge', from: 'Home', to, anchor: { path: 'body', t: 'button', txt: to } });
+  }
+  await page.reload();
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  await expect(inOverlay(page, '.map-node').nth(4)).toBeVisible();
+
+  const overlaps = await page.evaluate(() => {
+    const cards = [...document.querySelector('[data-fp-host]').shadowRoot.querySelectorAll('.map-node')];
+    const boxes = cards.map((c) => ({ label: c.dataset.label, r: c.getBoundingClientRect() }));
+    const hits = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i].r;
+        const b = boxes[j].r;
+        if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) {
+          hits.push(`${boxes[i].label} × ${boxes[j].label}`);
+        }
+      }
+    }
+    return hits;
+  });
+  expect(overlaps).toEqual([]);
+  await page.keyboard.press('Escape');
+});
+
+// Asked for: "when I add a comment in the map the view can be far away — bring
+// it to a workable distance." Fit zooms out to show everything; writing needs
+// the card readable.
+test('commenting on a card brings it to a readable distance', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  const card = inOverlay(page, '.map-node[data-label="Delta"]');
+  await expect(card).toBeVisible();
+  await page.evaluate(() => {
+    // Start far out, as "Fit" leaves a big map.
+    const sr = document.querySelector('[data-fp-host]').shadowRoot;
+    sr.querySelector('.map-canvas').style.transform = 'translate(20px, 20px) scale(0.35)';
+  });
+  const far = await card.boundingBox();
+  expect(far.width).toBeLessThan(120);
+
+  await mouseClick(page, card.locator('.map-act').filter({ hasText: 'Comment' }));
+  await page.waitForTimeout(500);
+  const near = await card.boundingBox();
+  expect(near.width, 'the card is legible').toBeGreaterThan(190);
+  expect(near.x).toBeGreaterThan(-1);
+  expect(near.x + near.width).toBeLessThanOrEqual(1281);
+  expect(near.y).toBeGreaterThan(-1);
+  await expect(card.locator('.compose textarea')).toBeVisible();
+  await page.keyboard.press('Escape');
 });

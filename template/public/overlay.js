@@ -2126,6 +2126,19 @@
     clearSticky();
   }
 
+  // Comments made before trails were recorded can still learn the way, once.
+  const taught = new Set();
+  async function teachTrail(t) {
+    if (taught.has(t.id)) return;
+    taught.add(t.id);
+    try {
+      await api('POST', { action: 'trail', threadId: t.id, trail: trail.slice() });
+      refresh();
+    } catch {
+      taught.delete(t.id); // the comment still opened; teaching is a bonus
+    }
+  }
+
   // Fallback when no learned route exists: the user navigates manually and
   // the comment pops open the moment its screen shows.
   function armGuided(t, message) {
@@ -2156,19 +2169,20 @@
       pulsePin(p);
     };
     if (!pos) {
-      // Nothing on this page marks it. Open the thread anyway — it is still
-      // readable and answerable — and name what to open, using the text the
-      // comment was left on.
-      openAtPin();
       if (t.anchor) {
+        // Its element is not in the page. Saying so and stopping is a dead end;
+        // wait for it instead — the moment the reviewer opens whatever holds it,
+        // checkPendingJump() lands the comment on it.
         const what = t.anchor.container?.name || t.anchor.txt;
-        toast(
+        armGuided(
+          t,
           what
-            ? `This comment sits on “${what}”, which isn’t open right now`
-            : 'This comment’s spot isn’t on the screen right now',
-          6000
+            ? `Open “${what}” — this comment will appear on it · Esc to cancel`
+            : 'Open the state this comment was left in — it will appear there · Esc to cancel'
         );
+        return;
       }
+      openAtPin(); // a comment about the screen: no spot to find
       return;
     }
     const off = pos.x < 0 || pos.y < 0 || pos.x > innerWidth || pos.y > innerHeight;
@@ -2189,7 +2203,13 @@
     const t = state.threads.find((x) => x.id === state.pendingJump);
     if (!t) return cancelJump();
     if (!onThisScreen(t)) return;
-    if (t.anchor?.container && !locateAnchor(t.anchor).pos && !containerOpen(t)) return; // state still closed
+    // Still not here: keep waiting rather than re-arming (which would re-toast
+    // on every mutation). Covers a closed container and a panel we never
+    // recognised as one.
+    if (t.anchor && !locateAnchor(t.anchor).pos && !triggerOf(t)?.pos) return;
+    // It came back because the reviewer opened something by hand. Remember how,
+    // so the next person is taken there instead of being asked.
+    if (t.anchor && !t.trail?.length && trail.length) teachTrail(t);
     jumpToThread(t);
   }
 
@@ -2518,12 +2538,15 @@
   // Structure = the learned navigation graph; pictures = shots (crawler or the
   // first preview on a screen). Layout: BFS layers from the boot screen.
   let mapEl = null;
+  let focusNode = () => {};
   const mapView = { x: 40, y: 40, k: 1 };
   let showHiddenNodes = false;
   const NODE_W = 240;
-  const NODE_H = 196;
+  // Must match .map-node's min-height in the CSS: the layout places cards by
+  // arithmetic, so a card taller than this steps on the one below it.
+  const NODE_H = 244;
   const COL = 380; // node + a gutter wide enough for several routed lines
-  const ROW = 226;
+  const ROW = 276;
   const BAND_TOP = 46; // room for the band label above the first row
   const LOOSE_GAP = 96; // the gap that says "this is a different kind of thing"
 
@@ -2920,6 +2943,7 @@
       cbtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (card.querySelector('.compose')) return;
+        focusNode(n);
         let box;
         box = composeRow({
           placeholder: `Comment on ${n.name}…`,
@@ -3005,6 +3029,19 @@
 
     // Pan (drag the background) and zoom (wheel), fit on open.
     const apply = () => (canvas.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.k})`);
+    // Bring a card to a readable distance: close enough to read the card and
+    // type into it, far enough to keep its neighbours in view.
+    focusNode = (n) => {
+      const vw = mapEl.clientWidth || innerWidth;
+      const vh = (mapEl.clientHeight || innerHeight) - 56;
+      mapView.k = Math.min(1.1, Math.max(0.85, mapView.k));
+      mapView.x = vw / 2 - (n.x + NODE_W / 2) * mapView.k;
+      // A little above centre: the composer opens under the card.
+      mapView.y = vh * 0.42 - (n.y + NODE_H / 2) * mapView.k;
+      canvas.style.transition = 'transform 260ms var(--ease)';
+      apply();
+      setTimeout(() => (canvas.style.transition = ''), 300);
+    };
     if (fit) {
       const vw = mapEl.clientWidth || innerWidth;
       const vh = (mapEl.clientHeight || innerHeight) - 56;

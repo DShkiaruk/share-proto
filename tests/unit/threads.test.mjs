@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
   assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage,
-  applyStatus, applyKind, applyReact,
+  applyStatus, applyKind, applyReact, applyTrail,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -227,4 +227,33 @@ test('status helpers are pure and keep resolved derived', () => {
   assert.deepEqual(r[0].messages[0].reactions, { '✅': ['Ann'] });
   assert.equal(applyReact(r, 'a', { target: 1, emoji: '✅', on: false, author: 'Ann' })[0].messages[0].reactions, undefined);
   assert.equal(applyResolve(base, 'a', true, 'Ann', 5)[0].status, 'done');
+});
+
+test('a thread can be taught the way back after the fact', () => {
+  const at = 1000;
+  const first = { authorRole: 'designer', screen: 's', screenLabel: 'S', anchor: { path: '#x' }, n: 1, trail: [] };
+  const events = [
+    { pathname: 'threads/t1/00000000001000-a.json', data: { type: 'msg', at, author: 'D', role: 'designer', text: 'hi', first } },
+  ];
+  assert.deepEqual(assemble(events)[0].trail, []);
+
+  const taught = [{ anchor: { path: '#row', t: 'button', txt: 'Acme invoice' }, txt: 'Acme invoice' }];
+  events.push({ pathname: 'threads/t1/00000000002000-b.json', data: { type: 'state', at: 2000, trail: taught } });
+  assert.equal(assemble(events)[0].trail.length, 1);
+  assert.equal(assemble(events)[0].trail[0].txt, 'Acme invoice');
+
+  // A later teaching wins; a malformed one is dropped, not stored.
+  events.push({ pathname: 'threads/t1/00000000003000-c.json', data: { type: 'state', at: 3000, trail: [{ nope: 1 }] } });
+  assert.deepEqual(assemble(events)[0].trail, []);
+});
+
+test('applyTrail replaces only the named thread and sanitizes', () => {
+  const threads = [
+    { id: 'a', trail: [] },
+    { id: 'b', trail: [{ anchor: { path: '#keep' }, txt: 'keep' }] },
+  ];
+  const next = applyTrail(threads, 'a', [{ anchor: { path: '#new' }, txt: 'new' }, 'junk']);
+  assert.equal(next[0].trail.length, 1);
+  assert.equal(next[0].trail[0].txt, 'new');
+  assert.deepEqual(next[1].trail, threads[1].trail);
 });

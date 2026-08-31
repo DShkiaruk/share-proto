@@ -155,7 +155,11 @@ export function assemble(events, root = '') {
       proto: firstMsg.first.proto || null,
       page: firstMsg.first.page || null,
       n: Number.isInteger(firstMsg.first.n) ? firstMsg.first.n : null,
-      trail: sanitizeTrail(firstMsg.first.trail),
+      // A later `trail` state event wins: it was taught by someone who actually
+      // reopened the state.
+      trail: sanitizeTrail(
+        states.filter((e) => Array.isArray(e.data.trail)).at(-1)?.data.trail ?? firstMsg.first.trail
+      ),
       // `resolved` is derived from the status (v1 read it off the event wrapper
       // and lost it on every rebuild). State events carry one concern each
       // (status | kind | preview), so they are filtered by field, not by type.
@@ -225,6 +229,13 @@ export const applyReact = (threads, tid, { target, emoji, on, author }) =>
   );
 
 export const applyDelete = (threads, tid) => threads.filter((t) => t.id !== tid);
+
+// A comment made before its trail was recorded can learn the way later: the
+// first time someone reopens the state by hand, the clicks that got them there
+// are saved onto the thread. Written once — a thread that knows the way is
+// never re-taught.
+export const applyTrail = (threads, tid, trail) =>
+  threads.map((t) => (t.id === tid ? { ...t, trail: sanitizeTrail(trail) } : t));
 
 export const applyPreview = (threads, tid, preview) =>
   threads.map((t) => (t.id === tid ? { ...t, preview } : t));

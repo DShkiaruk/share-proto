@@ -268,3 +268,22 @@ test('a cold start reads a room without rewriting it', async () => {
   assert.deepEqual(got.nav, { 'A>B': { path: 'a' } });
   assert.equal(s.writes, 0, 'loading a v2 room writes nothing');
 });
+
+test('a thread learns the way back once, and only once', async () => {
+  const r = room();
+  const t = (await create(r, 'client', 'Cliff')).payload.thread;
+  assert.deepEqual(t.trail, []);
+  const steps = [{ anchor: { path: '#row', t: 'button', txt: 'Acme' }, txt: 'Acme' }];
+  const taught = await r.post('designer', 'Dee', { action: 'trail', threadId: t.id, trail: steps });
+  assert.equal(taught.payload.thread.trail.length, 1);
+  assert.equal(r.s.map.get(`t:${t.id}`).trail[0].txt, 'Acme');
+
+  // A thread that knows the way is not re-taught by the next person to open it.
+  const again = await r.post('designer', 'Dee', {
+    action: 'trail',
+    threadId: t.id,
+    trail: [{ anchor: { path: '#other' }, txt: 'Other' }],
+  });
+  assert.equal(again.payload.thread.trail[0].txt, 'Acme');
+  assert.equal((await r.post('designer', 'Dee', { action: 'trail', threadId: t.id, trail: [] })).status, 400);
+});

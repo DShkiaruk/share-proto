@@ -194,3 +194,60 @@ test('a comment in a docked panel ghosts onto the row that opens it, instead of 
     t.id
   );
 });
+
+// The reported case, end to end: a comment made before trails were recorded,
+// whose element lives in a panel nothing marks as a container. Clicking it used
+// to say "this isn't open" and stop. Now it waits, opens on the element the
+// moment the panel comes back, and remembers how — so the next time it opens
+// the panel itself.
+test('a comment with no trail learns the way back the first time someone opens it', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  const t = await page.evaluate(async () => {
+    const r = await fetch('/api/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create',
+        text: 'made before trails existed',
+        screen: 'Home',
+        screenLabel: 'Home',
+        page: '/',
+        anchor: { path: '#details-preview', t: 'p', txt: 'Preview placeholder', fx: 0.5, fy: 0.5 },
+      }),
+    });
+    return (await r.json()).thread;
+  });
+  expect(t.trail).toEqual([]);
+
+  await page.reload();
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await expect(page.locator('#details')).toBeHidden();
+
+  // Clicking it arms a watch rather than giving up.
+  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'made before trails' }).first());
+  await expect(inOverlay(page, '.toast')).toContainText('Preview placeholder', { timeout: 10_000 });
+
+  // The reviewer opens the panel by hand; the comment lands on it.
+  await mouseClick(page, page.locator('.row[data-name="Globex receipt"]'));
+  await expect(page.locator('#details')).toBeVisible();
+  await expect(inOverlay(page, '.popover .msg .text').filter({ hasText: 'made before trails' })).toBeVisible({ timeout: 10_000 });
+
+  // And it kept the way back.
+  await expect
+    .poll(async () => (await apiGet(page, '/api/comments')).threads.find((x) => x.id === t.id)?.trail.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+
+  // Next time: no asking, the panel opens itself.
+  await page.reload();
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await expect(page.locator('#details')).toBeHidden();
+  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'made before trails' }).first());
+  await expect(page.locator('#details')).toBeVisible({ timeout: 15_000 });
+
+  await page.evaluate(
+    (id) => fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', threadId: id }) }),
+    t.id
+  );
+});
