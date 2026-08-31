@@ -9,6 +9,7 @@ const projects = [
   { name: 'local-media', testMatch: /media\.spec\.mjs/, use: local, dependencies: ['local-place'] },
   { name: 'local-workflow', testMatch: /workflow\.spec\.mjs/, use: local, dependencies: ['local-media'] },
   { name: 'local-map', testMatch: /map\.spec\.mjs/, use: local, dependencies: ['local-workflow'] },
+  { name: 'local-embed', testMatch: /embed\.spec\.mjs/, use: local, dependencies: ['local-map'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({
@@ -27,11 +28,22 @@ export default defineConfig({
   use: { trace: 'retain-on-failure' },
   reporter: [['list']],
   projects,
-  webServer: {
-    command: 'bash tests/fixtures/serve.sh',
-    url: 'http://localhost:4173/login.html',
-    reuseExistingServer: false,
-    timeout: 30_000,
-    cwd: new URL('../..', import.meta.url).pathname,
-  },
+  webServer: [
+    {
+      command: 'bash tests/fixtures/serve.sh',
+      url: 'http://localhost:4173/login.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+      cwd: new URL('../..', import.meta.url).pathname,
+    },
+    {
+      // "Someone else's deployment" for embed mode: a plain static host with
+      // no share-proto server of its own.
+      command: 'bash tests/fixtures/serve-embed.sh',
+      url: 'http://localhost:4174/embed-host.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+      cwd: new URL('../..', import.meta.url).pathname,
+    },
+  ],
 });

@@ -44,7 +44,9 @@ scripts/crawl.mjs     — walks the prototype with real clicks and shoots every 
 template/             — the complete system: auth middleware, comments API, overlay UI
 template/server.js    — local mode server (no Vercel)
 worker/               — Cloudflare Worker edition of the comments server (embed mode host)
-tests/                — unit tests (node --test) and Playwright e2e against a lab deployment
+tests/                — unit tests (node --test) and Playwright e2e: five local projects
+                        (place · media · workflow · map · embed) against the fixture,
+                        plus a smoke project against a real deployment
 ```
 
 The template is self-contained: append-only comment events in a private Blob store with a single derived state document, element-anchored pins, a shared navigation graph that powers "Go to comment", automatic dark-theme matching. Don't rewrite its internals — they encode lessons that aren't reproducible from the code alone (see "Hard rules" in SKILL.md).

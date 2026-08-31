@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PR preview</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; }
+  header { padding: 16px; border-bottom: 1px solid #ddd; }
+  main { padding: 24px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <header><strong>acme-app</strong> — preview of PR #7</header>
+  <main>
+    <h1>Checkout</h1>
+    <p>Someone else's deployment. share-proto is only a script tag here.</p>
+    <button id="pay">Pay now</button>
+  </main>
+</div>
+<!-- Embed mode: the overlay is served by the comments host on another origin,
+     and the room pins this preview's comments. -->
+<script src="http://localhost:4173/overlay.js" data-room="pr-7" defer></script>
+</body>
+</html>
