@@ -1,0 +1,133 @@
+{
+ "rooms": {
+  "_": {
+   "threads": [
+    {
+     "id": "09121a9b-e551-46fb-9374-9ecc2df93e57",
+     "createdAt": 1788175502650,
+     "authorRole": "designer",
+     "author": "Mapper",
+     "screen": "Billing",
+     "screenLabel": "Billing",
+     "anchor": null,
+     "proto": null,
+     "page": null,
+     "n": 1,
+     "trail": [],
+     "kind": null,
+     "status": "open",
+     "history": [],
+     "resolved": false,
+     "preview": null,
+     "messages": [
+      {
+       "author": "Mapper",
+       "role": "designer",
+       "text": "this step is redundant",
+       "at": 1788175502650
+      }
+     ]
+    }
+   ],
+   "nav": {
+    "Home>Settings": {
+     "anchor": {
+      "path": "div[id=\"root\"] > header:nth-of-type(1) > a:nth-of-type(2)",
+      "t": "a",
+      "txt": "Settings"
+     },
+     "at": 1788175476328
+    },
+    "Home>Home · Confirm": {
+     "anchor": {
+      "path": "button[id=\"open-dialog\"]",
+      "t": "button",
+      "txt": "Open dialog"
+     },
+     "at": 1788175482467
+    },
+    "Settings>Home": {
+     "anchor": {
+      "path": "div[id=\"root\"] > header:nth-of-type(1) > a:nth-of-type(1)",
+      "t": "a",
+      "txt": "Home"
+     },
+     "at": 1788175486170
+    },
+    "Home · Confirm>Home": {
+     "anchor": {
+      "path": "button[id=\"dlg-close\"]",
+      "t": "button",
+      "txt": "Close"
+     },
+     "at": 1788175500882
+    },
+    "Home>Search results": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "Search"
+     },
+     "at": 1788175502643
+    },
+    "Home>Billing": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "Billing"
+     },
+     "at": 1788175502644
+    },
+    "Settings>Notifications": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "Notifications"
+     },
+     "at": 1788175502645
+    },
+    "Search results>Document · Preview": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "Open first result"
+     },
+     "at": 1788175502646
+    },
+    "Billing>Document · Preview": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "View invoice"
+     },
+     "at": 1788175502647
+    },
+    "Document · Preview>Home": {
+     "anchor": {
+      "path": "body",
+      "t": "button",
+      "txt": "Back to all"
+     },
+     "at": 1788175502649
+    }
+   },
+   "versions": [
+    {
+     "id": "4239-1788175468597",
+     "firstSeen": 1788175472309,
+     "label": null
+    }
+   ],
+   "shots": {
+    "Home": "shots/SG9tZQ/01788175473586-49dcb3e6.jpg",
+    "Settings": "shots/U2V0dGluZ3M/01788175477317-46044ccc.jpg",
+    "Home · Confirm": "shots/SG9tZSDCtyBDb25maXJt/01788175483457-58172edb.jpg"
+   },
+   "mapmeta": {
+    "aliases": {},
+    "hidden": []
+   },
+   "maxN": 1
+  }
+ }
+}

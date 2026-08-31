@@ -99,9 +99,12 @@ const CONTRAST_JS = `(() => {
   };
   const ratio = (a, b) => { const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x); return (l1 + .05) / (l2 + .05); };
   const sels = ['.status', '.status-tag', '.badge', '.num', '.time', '.sys-line', '.react-chip', '.chip', '.ver-meta',
-    '.map-countline', '.toast', '.sb-group', '.excerpt', '.replies', '.name', '.tb-label', '.kind-chip', '.goto-screen',
+    '.toast', '.sb-group', '.excerpt', '.replies', '.name', '.tb-label', '.kind-chip', '.goto-screen',
     '.menu-label', '.map-edge-label', '.sb-note', '.nav-pos', '.filter-chip', '.wont-note textarea', '.sort',
-    '.in-container', '.map-name', '.present-dot', '.ver-label', '.excerpt'];
+    '.in-container', '.map-name', '.present-dot', '.ver-label', '.excerpt',
+    // the map's own vocabulary
+    '.map-band', '.map-band-note', '.map-chip', '.map-total', '.map-ph-title', '.map-ph-note', '.map-act',
+    '.start-flag', '.here-flag'];
   const out = [];
   const seen = new Set();
   for (const sel of sels) for (const el of r.querySelectorAll(sel)) {
