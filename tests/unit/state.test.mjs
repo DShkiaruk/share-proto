@@ -1,9 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta, applyVersionEvent } from '../../template/lib/state.js';
-import { isWriteConflict } from '../../template/lib/storage.js';
 import { applyCreate } from '../../template/lib/threads.js';
-import { normalizeEtag } from '../../template/lib/storage.js';
+
+// storage.js speaks to Vercel Blob, so importing it needs that SDK installed.
+// Everything else here is pure and must run on a bare clone — local mode
+// promises no npm install, and the tests should hold themselves to it. The two
+// Blob-specific cases below skip, with a reason, when it is absent.
+let isWriteConflict = null;
+let normalizeEtag = null;
+try {
+  ({ isWriteConflict, normalizeEtag } = await import('../../template/lib/storage.js'));
+} catch {
+  /* @vercel/blob not installed */
+}
+const needsBlob = isWriteConflict ? false : 'run npm install first — this case needs @vercel/blob';
 
 class ConflictError extends Error {}
 
@@ -136,7 +147,7 @@ test('rebuild: nav edges are ordered by time and capped', async () => {
   assert.deepEqual(Object.keys(nav), ['B>C']);
 });
 
-test('normalizeEtag strips the weak-validator prefix and keeps strong tags intact', () => {
+test('normalizeEtag strips the weak-validator prefix and keeps strong tags intact', { skip: needsBlob }, () => {
   assert.equal(normalizeEtag('W/"abc"'), '"abc"');
   assert.equal(normalizeEtag('"abc"'), '"abc"');
   assert.equal(normalizeEtag(undefined), null);
@@ -174,7 +185,7 @@ test('rebuild folds shotlog and mapmeta events', async () => {
   assert.deepEqual(s.mapmeta, { aliases: { Home: 'Start' }, hidden: [] });
 });
 
-test('isWriteConflict recognises both ways Blob reports a lost race', () => {
+test('isWriteConflict recognises both ways Blob reports a lost race', { skip: needsBlob }, () => {
   // Observed on a real deployment: eight concurrent creates, two of which failed
   // with this message and were answered 500 instead of being retried.
   const inFlight = new Error('Vercel Blob: The conditional request cannot succeed due to a conflicting operation against this resource.');

@@ -8,7 +8,8 @@
     "smoke": "bash scripts/smoke.sh",
     "crawl": "node scripts/crawl.mjs",
     "e2e:worker": "playwright test -c tests/e2e/playwright.worker.config.mjs",
-    "smoke:worker": "bash scripts/worker-smoke.sh"
+    "smoke:worker": "bash scripts/worker-smoke.sh",
+    "pretest": "node -e \"require('fs').existsSync('node_modules')||console.log('note: no node_modules \u2014 the Blob adapter cases will skip. npm install to run them.')\""
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
