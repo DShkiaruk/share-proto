@@ -739,7 +739,10 @@
       const label = screenLabel();
       if (!label || isFallbackLabel(label) || shotTried.has(label)) return;
       if ((state.shots || {})[label]) return;
-      if (state.map || state.draft || state.presenting) return; // not while the view is busy
+      // Only while nobody is doing anything: rasterizing the page costs a beat,
+      // and a re-render underneath an open thread or a hovering cursor eats the
+      // click that was coming.
+      if (state.map || state.draft || state.presenting || state.sidebar || state.active || state.mode) return;
       shotTried.add(label);
       const image = await snapViewport();
       if (!image) return;
@@ -868,6 +871,9 @@
           state.shots = data.shots || {};
           state.mapmeta = data.mapmeta || { aliases: {}, hidden: [] };
           state.threads = data.threads;
+          // Also on first load, not only when the screen changes: a designer who
+          // opens the prototype and stays put still fills that screen's card.
+          autoShot();
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
           const sig = JSON.stringify([
