@@ -60,11 +60,22 @@ const controls = () =>
     return out;
   });
 
+const showOverlay = (on) =>
+  page.evaluate((v) => {
+    const h = document.querySelector('[data-fp-host]');
+    if (h) h.style.visibility = v;
+  }, on ? '' : 'hidden');
+
 const shoot = async (lbl) => {
-  // The map wants the prototype, not the comment UI on top of it.
-  await page.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = 'hidden'));
-  const buf = await page.screenshot({ type: 'jpeg', quality: 80 });
-  await page.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = ''));
+  // The map wants the prototype, not the comment UI on top of it. Restore the
+  // overlay even if the shot fails — otherwise the rest of the crawl is blind.
+  let buf;
+  await showOverlay(false);
+  try {
+    buf = await page.screenshot({ type: 'jpeg', quality: 80 });
+  } finally {
+    await showOverlay(true);
+  }
   return page.evaluate(
     async ([l, b64]) =>
       (
