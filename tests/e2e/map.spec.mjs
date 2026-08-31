@@ -93,3 +93,35 @@ test('a hidden screen is hidden from the client — its shot too, not just its n
 
   expect(await apiPost(designer, { action: 'mapmeta', show: 'Settings' })).toBe(200);
 });
+
+// What the map has to say before anything else: where this starts, how far
+// each screen is from there, and which cards are gaps rather than screens.
+// Reported from the live deployment: no visible start, tangled lines, white
+// cards on a white ground, and the page showing through the panel.
+test('the map states where the flow begins, and stands on its own ground', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  await expect(inOverlay(page, '.map')).toBeVisible();
+
+  // Opaque: the prototype behind it was making both unreadable.
+  const alpha = await page.evaluate(() => {
+    const bg = getComputedStyle(document.querySelector('[data-fp-host]').shadowRoot.querySelector('.map')).backgroundColor;
+    const m = bg.match(/[\d.]+/g).map(Number);
+    return m.length > 3 ? m[3] : 1;
+  });
+  expect(alpha).toBe(1);
+
+  await expect(inOverlay(page, '.map-band').filter({ hasText: 'Start' }).first()).toBeVisible();
+  await expect(inOverlay(page, '.map-node.start .start-flag')).toHaveCount(1);
+  // labelsMatch() is loose on purpose; only one card may claim to be this screen.
+  await expect(inOverlay(page, '.map-node.current')).toHaveCount(1);
+
+  // A screen with no picture says so, and says what fills it.
+  const blanks = inOverlay(page, '.map-node.blank');
+  if (await blanks.count()) {
+    await expect(blanks.first().locator('.map-ph-title')).toHaveText('No picture yet');
+    await expect(blanks.first().locator('.map-ph-note')).toContainText('Open this screen');
+  }
+  await page.keyboard.press('Escape');
+});

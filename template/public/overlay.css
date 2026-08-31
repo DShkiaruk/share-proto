@@ -16,6 +16,13 @@
   --danger: #dc2626;
   --unread: #3b82f6;
   --ring: #3b82f680;
+  /* The map is a canvas, not a page: cards need a ground to sit on. */
+  --map-ground: #eceef3;
+  --map-dot: rgb(20 24 34 / 0.13);
+  /* "You are here" is 10px on a filled chip, so it needs a deeper blue than
+     --unread to clear 4.5:1 against white. */
+  --here-bg: #1d4ed8;
+  --here-fg: #ffffff;
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
@@ -38,6 +45,10 @@
   --muted-fg-2: #b8b8b8;
   --muted: rgb(255 255 255 / 0.08);
   --border: rgb(255 255 255 / 0.14);
+  --map-ground: #0d1015;
+  --map-dot: rgb(255 255 255 / 0.11);
+  --here-bg: #9cc2ff;
+  --here-fg: #0b0e13;
   --surface: #1f1f1f;
   --danger: #ef4444;
   --unread: #60a5fa;
@@ -1463,7 +1474,8 @@
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  /* Fully opaque: seeing the prototype through the map made both unreadable. */
+  background: var(--map-ground);
   color: var(--ink);
   pointer-events: auto;
   display: flex;
@@ -1508,10 +1520,58 @@
   touch-action: none;
 }
 .map-viewport:active { cursor: grabbing; }
-.map-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.map-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  /* A dot grid reads as "canvas" instantly and gives the eye a scale reference
+     while panning. It scales with the content, so zoom feels like zoom. */
+  background-image: radial-gradient(circle at 1px 1px, var(--map-dot) 1px, transparent 0);
+  background-size: 24px 24px;
+}
 .map-edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; color: var(--muted-fg-2); }
-.map-edge { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: 0.8; }
-.map-edge-label { font-size: 11px; fill: currentColor; color: var(--muted-fg-2); font-family: inherit; }
+.map-edge { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; opacity: 0.75; }
+/* A return path is a different kind of move and says so. */
+.map-edge.back { stroke-dasharray: 5 4; opacity: 0.45; }
+.map-edge-label {
+  font-size: 11px;
+  fill: var(--muted-fg-2);
+  font-family: inherit;
+  /* Painted with the ground as a stroke underneath: legible where it crosses a
+     line, without a rectangle to keep aligned. */
+  stroke: var(--map-ground);
+  stroke-width: 4px;
+  paint-order: stroke;
+  stroke-linejoin: round;
+}
+
+/* Band labels: the column is "how many clicks from the start", so the map
+   answers "where does this begin" before any card is read. */
+.map-band {
+  position: absolute;
+  width: 240px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-fg-2);
+  padding-bottom: 10px;
+}
+.map-band.loose {
+  width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.map-band .map-band-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--muted-fg-2); /* 11px secondary text: --muted-fg misses AA here */
+}
 .map-empty {
   position: absolute;
   left: 0;
@@ -1533,33 +1593,70 @@
 }
 .map-node:hover { box-shadow: var(--shadow-lg); translate: 0 -2px; }
 .map-node.current { outline: 2px solid var(--unread); outline-offset: 2px; }
+.map-node.start { border-color: color-mix(in srgb, var(--ink) 45%, var(--border)); }
+/* A screen with no picture is a gap in the map, not a screen that looks blank. */
+.map-node.blank {
+  background: color-mix(in srgb, var(--map-ground) 55%, var(--surface));
+  border-style: dashed;
+  box-shadow: none;
+}
+.map-node.blank:hover { box-shadow: var(--shadow-sm); }
+.map-flag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+.start-flag { background: var(--primary); color: var(--primary-fg); }
+.here-flag { background: var(--here-bg); color: var(--here-fg); left: auto; right: 8px; }
+.map-node.start.current .start-flag { top: 8px; }
+.map-foot { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
+.map-meta { display: flex; align-items: center; gap: 8px; }
+.map-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9999px;
+}
+.map-chip.open { background: color-mix(in srgb, var(--unread) 16%, transparent); color: color-mix(in srgb, var(--unread) 78%, var(--ink)); }
+.map-chip.done { background: var(--muted); color: var(--muted-fg-2); }
+.map-total { font-size: 11px; color: var(--muted-fg-2); }
 .map-thumb {
   display: block;
   width: 100%;
   height: 150px;
-  background: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   padding: 0;
 }
 .map-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
 .map-placeholder {
   height: 100%;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  color: var(--muted-fg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 16px;
+  text-align: center;
 }
+.map-ph-title { font-size: 12px; font-weight: 600; color: var(--muted-fg-2); }
+.map-ph-note { font-size: 11px; color: var(--muted-fg-2); line-height: 1.35; }
 .map-name {
   font-size: 13px;
   font-weight: 600;
-  padding: 8px 10px 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .map-rename {
-  margin: 6px 10px 0;
-  width: calc(100% - 20px);
+  width: 100%;
   font: inherit;
   font-size: 13px;
   padding: 3px 6px;
@@ -1568,7 +1665,7 @@
   background: var(--surface);
   color: var(--ink);
 }
-.map-countline { font-size: 11px; color: var(--muted-fg); padding: 2px 10px 8px; }
+
 .map-hide {
   position: absolute;
   top: 6px;

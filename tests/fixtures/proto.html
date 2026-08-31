@@ -10,6 +10,13 @@
   .menu { position: absolute; z-index: 10; margin-top: 4px; background: #fff; border: 1px solid #ccc; padding: 6px; width: 160px; }
   .menu button { display: block; width: 100%; text-align: left; padding: 8px; background: none; border: 0; }
   dialog { border: 1px solid #999; padding: 24px; }
+  /* A docked detail panel: part of the layout, not a floating layer — no role,
+     no aria, position static. findContainer() cannot classify this, which is
+     exactly why the trail has to be stored for every comment. */
+  .split { display: flex; gap: 16px; align-items: flex-start; margin-top: 16px; }
+  .split ul { list-style: none; margin: 0; padding: 0; }
+  .split li button { display: block; width: 220px; text-align: left; padding: 8px; margin-bottom: 4px; }
+  #details { width: 240px; border: 1px solid #ccc; padding: 12px; }
   section[hidden] { display: none; }
 </style>
 </head>
@@ -29,6 +36,17 @@
           <button role="menuitem">Name</button>
           <button role="menuitem">Price</button>
           <button role="menuitem">Date</button>
+        </div>
+      </div>
+      <div class="split">
+        <ul>
+          <li><button class="row" data-name="Acme invoice">Acme invoice</button></li>
+          <li><button class="row" data-name="Globex receipt">Globex receipt</button></li>
+        </ul>
+        <div id="details" hidden>
+          <p id="details-name">Acme invoice</p>
+          <p id="details-preview">Preview placeholder</p>
+          <button id="details-close">Close</button>
         </div>
       </div>
       <p><button id="open-dialog">Open dialog</button></p>
@@ -53,6 +71,14 @@
   btn.addEventListener('pointerdown', (e) => { e.preventDefault(); setMenu(menu.hidden); });
   menu.addEventListener('click', () => setMenu(false));
   document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) setMenu(false); });
+  const details = document.getElementById('details');
+  document.querySelectorAll('.row').forEach((b) =>
+    b.addEventListener('click', () => {
+      document.getElementById('details-name').textContent = b.dataset.name;
+      details.hidden = false;
+    })
+  );
+  document.getElementById('details-close').addEventListener('click', () => (details.hidden = true));
   document.getElementById('open-dialog').addEventListener('click', () => document.getElementById('dlg').showModal());
   document.getElementById('dlg-close').addEventListener('click', () => document.getElementById('dlg').close());
 </script>

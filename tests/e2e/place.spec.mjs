@@ -149,3 +149,48 @@ test('a native modal dialog makes the overlay unreachable, and closing it gives 
   await expect(inOverlay(page, '.click-layer')).toBeVisible(); // it really is live again
   await page.keyboard.press('Escape');
 });
+
+// A detail panel docked in the layout — no role, no aria, position static — is
+// invisible to findContainer(), so this used to store no trail at all. Closing
+// the panel then left the comment's pin sitting on whatever had been behind it,
+// pointing at a row it was never about. Reported from the live deployment.
+test('a comment in a docked panel ghosts onto the row that opens it, instead of stranding a pin', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  const row = page.locator('.row[data-name="Acme invoice"]'); // not by name: the ghost pin is labelled after it
+  await mouseClick(page, row);
+  await expect(page.locator('#details')).toBeVisible();
+
+  const t = await commentAt(page, page.locator('#details-preview'), 'the preview is empty here');
+  expect(t.anchor.container, 'the panel is not a floating layer — nothing to classify').toBeFalsy();
+  expect(t.trail.length, 'but the click that opens it was kept').toBeGreaterThan(0);
+  expect(t.trail.at(-1).txt).toBe('Acme invoice');
+  await page.keyboard.press('Escape');
+
+  const pin = inOverlay(page, `.pin`).filter({ hasText: String(t.n) });
+  const inPanel = await pin.boundingBox();
+  const panelBox = await page.locator('#details').boundingBox();
+  expect(inPanel.x).toBeGreaterThan(panelBox.x - 40); // the real pin is on the panel
+
+  await mouseClick(page, page.locator('#details-close'));
+  await expect(page.locator('#details')).toBeHidden();
+  await expect(pin).toHaveClass(/ghost/);
+  const onRow = await pin.boundingBox();
+  const rowBox = await row.boundingBox();
+  expect(Math.abs(onRow.x - (rowBox.x + rowBox.width / 2))).toBeLessThan(30);
+  expect(Math.abs(onRow.y - (rowBox.y + rowBox.height / 2))).toBeLessThan(30);
+
+  // And it is a way back in, not just a marker.
+  await mouseClick(page, pin);
+  await expect(page.locator('#details')).toBeVisible({ timeout: 10_000 });
+  await expect(pin).not.toHaveClass(/ghost/);
+
+  await page.evaluate(
+    async (id) =>
+      fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', threadId: id }),
+      }),
+    t.id
+  );
+});

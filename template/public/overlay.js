@@ -725,14 +725,41 @@
   // Rasterize the current viewport with the pin marked, downscale, and attach it
   // to the thread. Runs after the post succeeded; any failure is silent — a
   // comment without a picture is still a comment.
-  async function capturePreview(thread, point, at) {
-    if (state.serverV < 2) return; // no media endpoint on this server
+  /* Why the map used to be full of empty cards: a screen only got a picture
+     when the crawler was run, or when someone happened to leave the first
+     comment on it. Now a designer simply being on a screen the map has nothing
+     for is enough — once per screen, quietly, and never for the client (whose
+     view of the map is filtered anyway). */
+  const shotTried = new Set();
+  let shotTimer = null;
+  function autoShot() {
+    if (state.role !== 'designer' || state.serverV < 2) return;
+    clearTimeout(shotTimer);
+    shotTimer = setTimeout(async () => {
+      const label = screenLabel();
+      if (!label || isFallbackLabel(label) || shotTried.has(label)) return;
+      if ((state.shots || {})[label]) return;
+      if (state.map || state.draft || state.presenting) return; // not while the view is busy
+      shotTried.add(label);
+      const image = await snapViewport();
+      if (!image) return;
+      // The screen may have changed while the canvas was rasterizing.
+      if (screenLabel() !== label) return;
+      try {
+        await api('POST', { action: 'shot', label, image });
+        refresh();
+      } catch {
+        shotTried.delete(label); // a failed upload may work next time
+      }
+    }, 1800); // let the screen settle before painting it
+  }
+
+  // Rasterize the current viewport to a JPEG data URL. Shared by the comment
+  // preview and the map's automatic screen shots.
+  async function snapViewport(point) {
     try {
-      // The reviewer may have moved on since the post — a picture of another
-      // screen would be worse than none.
-      if (at && (at.label !== screenLabel() || at.page !== currentPage())) return;
       const lib = await loadScreenshotLib();
-      if (!lib) return;
+      if (!lib) return null;
       const scale = Math.min(1, 960 / innerWidth);
       const full = await Promise.race([
         lib.domToCanvas(document.documentElement, {
@@ -762,7 +789,20 @@
         ctx.stroke();
       }
       const image = c.toDataURL('image/jpeg', 0.8);
-      if (image.length > 1.4e6) return; // ~1 MB of base64 — skip rather than fail the request
+      return image.length > 1.4e6 ? null : image; // ~1 MB of base64
+    } catch {
+      return null;
+    }
+  }
+
+  async function capturePreview(thread, point, at) {
+    if (state.serverV < 2) return; // no media endpoint on this server
+    // The reviewer may have moved on since the post — a picture of another
+    // screen would be worse than none.
+    if (at && (at.label !== screenLabel() || at.page !== currentPage())) return;
+    const image = await snapViewport(point);
+    if (!image) return;
+    try {
       await api('POST', { action: 'preview', threadId: thread.id, image });
       refresh();
     } catch {
@@ -1082,18 +1122,20 @@
         p.style.display = 'none';
         continue;
       }
-      // 1. real: the anchored element is here. 2. ghost: it lives in a closed
-      // container and the trigger is here. 3. hidden: container, no trigger.
-      // 4. approximate: no container → stored document fraction (v1 rule).
+      // 1. real: the anchored element is on the page.
+      // 2. ghost: it is not, but we know the click that brings it back.
+      // 3. nothing: it is not placeable here at all.
+      // There is deliberately no fourth "approximate" state any more. Falling
+      // back to the stored document fraction put a confident pin wherever the
+      // element used to be — so closing a side panel left its comments sitting
+      // on the table underneath, pointing at rows they were never about.
       let pos = resolveAnchor(t.anchor);
       let ghost = false;
       if (!pos) {
-        if (t.anchor?.container && !containerOpen(t)) {
-          const trig = triggerOf(t);
-          pos = trig?.pos || null;
-          ghost = Boolean(pos);
-        } else {
-          pos = fracPos(t.anchor);
+        const trig = triggerOf(t);
+        if (trig?.pos) {
+          pos = trig.pos;
+          ghost = true;
         }
       }
       if (!pos) {
@@ -1101,7 +1143,13 @@
         continue;
       }
       p.classList.toggle('ghost', ghost);
-      if (ghost) p.setAttribute('aria-label', `Comment ${numLabel(t)} by ${t.author} — inside a closed ${t.anchor.container.name || 'menu'}; click to open it`);
+      if (ghost) {
+        const what = t.anchor?.container?.name || t.trail?.at(-1)?.txt || 'state';
+        p.setAttribute('aria-label', `Comment ${numLabel(t)} by ${t.author} — behind “${what}”; click to reopen it`);
+        p.title = `Comment ${numLabel(t)} is inside “${what}” — click to reopen`;
+      } else {
+        p.removeAttribute('title');
+      }
       p.style.background = ghost ? '' : pastel(t.author);
       const off = pos.x < -40 || pos.y < -40 || pos.x > innerWidth + 40 || pos.y > innerHeight + 40;
       p.style.display = off ? 'none' : '';
@@ -2443,9 +2491,15 @@
   let showHiddenNodes = false;
   const NODE_W = 240;
   const NODE_H = 196;
-  const COL = 320;
+  const COL = 380; // node + a gutter wide enough for several routed lines
   const ROW = 226;
+  const BAND_TOP = 46; // room for the band label above the first row
+  const LOOSE_GAP = 96; // the gap that says "this is a different kind of thing"
 
+  /* The map is a flow, so it is laid out like one: columns are distance from
+     the screen the prototype opens on, and screens no click leads to get their
+     own band instead of being dumped in the last column as if they were the
+     end of the story. */
   function mapModel() {
     const hidden = new Set(state.mapmeta?.hidden || []);
     const alias = state.mapmeta?.aliases || {};
@@ -2473,27 +2527,83 @@
         }
       }
     }
-    const maxD = Math.max(0, ...depth.values());
     const visible = all.filter((n) => !hidden.has(n));
+    // Exactly one "you are here". labelsMatch() is deliberately loose (an old
+    // label still finds its screen), so an exact hit wins — otherwise two cards
+    // claim to be the screen you are standing on.
+    const here =
+      visible.find((l) => l === state.screen) || visible.find((l) => labelsMatch(l, state.screen)) || null;
     const list = visible.map((label) => ({
       label,
       name: alias[label] || label,
-      d: depth.has(label) ? depth.get(label) : maxD + 1,
+      d: depth.has(label) ? depth.get(label) : null, // null: nothing links here
       shot: (state.shots || {})[label] || null,
       open: state.threads.filter((t) => t.screenLabel === label && !t.resolved).length,
       total: state.threads.filter((t) => t.screenLabel === label).length,
-      current: labelsMatch(label, state.screen),
+      current: label === here,
+      start: label === start,
     }));
+
+    const byLabel = (a, b) => a.label.localeCompare(b.label);
+    const linked = list.filter((n) => n.d !== null);
+    const loose = list.filter((n) => n.d === null).sort(byLabel);
     const cols = new Map();
-    for (const n of list.sort((a, b) => a.d - b.d || a.label.localeCompare(b.label))) {
+    for (const n of linked) {
       if (!cols.has(n.d)) cols.set(n.d, []);
-      n.row = cols.get(n.d).length;
       cols.get(n.d).push(n);
-      n.x = n.d * COL;
-      n.y = n.row * ROW;
     }
-    return { nodes: list, edges: edges.filter((e) => !hidden.has(e.from) && !hidden.has(e.to)), hidden: [...hidden] };
+    // Order each column by the average row of the screens that lead into it.
+    // Alphabetical order looks tidy in a list and makes a mess of a graph: a
+    // child three rows below its parent drags a line across everything between.
+    const rowOf = new Map();
+    const columns = [];
+    for (const d of [...cols.keys()].sort((a, b) => a - b)) {
+      const col = cols.get(d);
+      const pull = (n) => {
+        const parents = edges
+          .filter((e) => e.to === n.label && rowOf.has(e.from))
+          .map((e) => rowOf.get(e.from));
+        return parents.length ? parents.reduce((x, y) => x + y, 0) / parents.length : Number.MAX_SAFE_INTEGER;
+      };
+      const weight = new Map(col.map((n) => [n.label, pull(n)]));
+      col.sort((a, b) => weight.get(a.label) - weight.get(b.label) || byLabel(a, b));
+      col.forEach((n, i) => {
+        n.row = i;
+        rowOf.set(n.label, i);
+        n.x = d * COL;
+      });
+      columns.push({ d, x: d * COL, count: col.length, nodes: col });
+    }
+    // Centre every column on the band: a one-screen column pinned to the top
+    // sends its lines diving past three rows to reach the middle of the next.
+    const tallest = Math.max(1, ...columns.map((c) => c.count));
+    for (const c of columns) {
+      c.offset = ((tallest - c.count) * ROW) / 2;
+      c.nodes.forEach((n, i) => (n.y = BAND_TOP + c.offset + i * ROW));
+      c.top = BAND_TOP + c.offset;
+      delete c.nodes;
+    }
+    const flowBottom = BAND_TOP + tallest * ROW;
+    const perRow = Math.max(1, Math.min(4, cols.size || 1));
+    let looseTop = null;
+    if (loose.length) {
+      looseTop = flowBottom + LOOSE_GAP;
+      loose.forEach((n, i) => {
+        n.x = (i % perRow) * COL;
+        n.y = looseTop + BAND_TOP + Math.floor(i / perRow) * ROW;
+      });
+    }
+    return {
+      nodes: [...linked, ...loose],
+      edges: edges.filter((e) => !hidden.has(e.from) && !hidden.has(e.to)),
+      hidden: [...hidden],
+      columns,
+      flowBottom,
+      looseTop,
+      looseCount: loose.length,
+    };
   }
+
 
   function toggleMap() {
     if (state.map) closeMap();
@@ -2572,66 +2682,141 @@
       canvas.appendChild(el('div', 'map-empty', 'No screens yet — the map fills in as people click around, or all at once with scripts/crawl.mjs.'));
     }
 
-    const W = Math.max(0, ...model.nodes.map((n) => n.x + NODE_W));
-    const H = Math.max(0, ...model.nodes.map((n) => n.y + NODE_H));
+    const W = Math.max(0, ...model.nodes.map((n) => n.x + NODE_W)) + 40;
+    const H = Math.max(0, ...model.nodes.map((n) => n.y + NODE_H)) + 80;
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('class', 'map-edges');
-    svg.setAttribute('width', String(W + 40));
-    svg.setAttribute('height', String(H + 100)); // room for the labels under back-edges
+    svg.setAttribute('width', String(W));
+    svg.setAttribute('height', String(H));
     const defs = document.createElementNS(svgNS, 'defs');
     defs.innerHTML =
-      '<marker id="fp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>';
+      '<marker id="fp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>';
     svg.appendChild(defs);
+
+    // Right angles with rounded corners, not free curves: a reader follows a
+    // line that only ever goes across or down. Curves between arbitrary points
+    // cross each other and stop being followable past three or four edges.
+    const corner = (pts, r = 9) => {
+      if (pts.length < 2) return '';
+      let d = `M${pts[0][0]} ${pts[0][1]}`;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const [px, py] = pts[i - 1];
+        const [cx, cy] = pts[i];
+        const [nx, ny] = pts[i + 1];
+        const len = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay) || 1;
+        const rr = Math.min(r, len(px, py, cx, cy) / 2, len(cx, cy, nx, ny) / 2);
+        const ux = ((px - cx) / len(px, py, cx, cy)) * rr;
+        const uy = ((py - cy) / len(px, py, cx, cy)) * rr;
+        const vx = ((nx - cx) / len(cx, cy, nx, ny)) * rr;
+        const vy = ((ny - cy) / len(cx, cy, nx, ny)) * rr;
+        d += ` L${cx + ux} ${cy + uy} Q${cx} ${cy} ${cx + vx} ${cy + vy}`;
+      }
+      const [lx, ly] = pts[pts.length - 1];
+      return `${d} L${lx} ${ly}`;
+    };
+
     const byLabel = new Map(model.nodes.map((n) => [n.label, n]));
-    // Two edges that loop back under the same nodes get the same midpoint, and
-    // their labels used to print on top of each other — unreadable, and it
-    // looked like one corrupted word. Keep what has been placed and step down.
+    const live = model.edges.filter((e) => byLabel.has(e.from) && byLabel.has(e.to));
+    // One port per edge on each side, so two lines never leave the same pixel.
+    const out = new Map();
+    const into = new Map();
+    for (const e of live) {
+      if (!out.has(e.from)) out.set(e.from, []);
+      out.get(e.from).push(e);
+      if (!into.has(e.to)) into.set(e.to, []);
+      into.get(e.to).push(e);
+    }
+    const port = (node, list, e) => node.y + (NODE_H * (list.indexOf(e) + 1)) / (list.length + 1);
     const placed = [];
     const shift = (x, y, w) => {
-      let out = y;
+      let out2 = y;
       for (let i = 0; i < 8; i++) {
-        const hit = placed.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 && Math.abs(p.y - out) < 14);
+        const hit = placed.some((q) => Math.abs(q.x - x) < (q.w + w) / 2 && Math.abs(q.y - out2) < 15);
         if (!hit) break;
-        out += 15;
+        out2 += 16;
       }
-      placed.push({ x, y: out, w });
-      return out;
+      placed.push({ x, y: out2, w });
+      return out2;
     };
-    for (const e of model.edges) {
+    let lane = 0;
+    for (const e of live) {
       const a = byLabel.get(e.from);
       const b = byLabel.get(e.to);
-      if (!a || !b) continue;
-      const x1 = a.x + NODE_W;
-      const y1 = a.y + NODE_H / 2 - 20;
-      const x2 = b.x;
-      const y2 = b.y + NODE_H / 2 - 20;
-      const back = x2 <= x1; // edge to an earlier layer: loop under the nodes
-      const d = back
-        ? `M${x1 - NODE_W / 2} ${a.y + NODE_H} C ${x1 - NODE_W / 2} ${a.y + NODE_H + 60}, ${x2 + NODE_W / 2} ${b.y + NODE_H + 60}, ${x2 + NODE_W / 2} ${b.y + NODE_H}`
-        : `M${x1} ${y1} C ${x1 + (x2 - x1) / 2} ${y1}, ${x1 + (x2 - x1) / 2} ${y2}, ${x2} ${y2}`;
+      const back = b.x <= a.x;
+      const y1 = port(a, out.get(e.from), e);
+      const y2 = port(b, into.get(e.to), e);
+      let pts;
+      let labelAt;
+      if (back) {
+        // A return path runs under everything in its own lane and is dashed:
+        // going back is not the same kind of move as going forward.
+        const laneY = model.flowBottom + 18 + (lane++ % 5) * 15;
+        const sx = a.x + NODE_W / 2;
+        const tx = b.x + NODE_W / 2;
+        pts = [
+          [sx, a.y + NODE_H],
+          [sx, laneY],
+          [tx, laneY],
+          [tx, b.y + NODE_H],
+        ];
+        labelAt = [sx + (tx - sx) * 0.28, laneY - 7];
+      } else {
+        const x1 = a.x + NODE_W;
+        const x2 = b.x;
+        const gut = Math.max(24, x2 - x1);
+        const idx = out.get(e.from).indexOf(e);
+        const chan = x1 + gut * (0.28 + (0.44 * (idx + 1)) / (out.get(e.from).length + 1));
+        pts = Math.abs(y1 - y2) < 3 ? [[x1, y1], [x2, y2]] : [[x1, y1], [chan, y1], [chan, y2], [x2, y2]];
+        labelAt = [x2 - 10, y2 - 7];
+      }
       const path = document.createElementNS(svgNS, 'path');
-      path.setAttribute('class', 'map-edge');
-      path.setAttribute('d', d);
+      path.setAttribute('class', 'map-edge' + (back ? ' back' : ''));
+      path.setAttribute('d', corner(pts));
       path.setAttribute('marker-end', 'url(#fp-arrow)');
       svg.appendChild(path);
       if (e.txt) {
+        const label = e.txt.length > 22 ? `${e.txt.slice(0, 21)}…` : e.txt;
         const text = document.createElementNS(svgNS, 'text');
         text.setAttribute('class', 'map-edge-label');
-        const label = e.txt.length > 24 ? `${e.txt.slice(0, 23)}…` : e.txt;
-        const lx = back ? (x1 + x2) / 2 : x1 + (x2 - x1) / 2;
-        const ly = back ? Math.max(a.y, b.y) + NODE_H + 52 : (y1 + y2) / 2 - 6;
-        text.setAttribute('x', String(lx));
-        text.setAttribute('y', String(shift(lx, ly, label.length * 6.2)));
-        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('x', String(labelAt[0]));
+        text.setAttribute('y', String(shift(labelAt[0], labelAt[1], label.length * 6.4)));
+        text.setAttribute('text-anchor', back ? 'middle' : 'end');
         text.textContent = label;
         svg.appendChild(text);
       }
     }
     canvas.appendChild(svg);
 
+    // Band labels answer "where does this start?" before any card is read.
+    for (const c of model.columns) {
+      const band = el('div', 'map-band', c.d === 0 ? 'Start' : c.d === 1 ? '1 click away' : `${c.d} clicks away`);
+      band.style.left = `${c.x}px`;
+      band.style.top = `${Math.max(0, c.top - BAND_TOP)}px`;
+      canvas.appendChild(band);
+    }
+    if (model.looseCount) {
+      const band = el('div', 'map-band loose');
+      band.append(
+        el('span', 'map-band-name', 'Not linked from the start'),
+        el(
+          'span',
+          'map-band-note',
+          `${model.looseCount} ${model.looseCount === 1 ? 'screen' : 'screens'} nobody has clicked their way into yet`
+        )
+      );
+      band.style.left = '0px';
+      band.style.top = `${model.looseTop}px`;
+      canvas.appendChild(band);
+    }
+
     for (const n of model.nodes) {
-      const card = el('div', 'map-node' + (n.current ? ' current' : ''));
+      const card = el(
+        'div',
+        'map-node' + (n.current ? ' current' : '') + (n.shot ? '' : ' blank') + (n.start ? ' start' : '')
+      );
       card.style.left = `${n.x}px`;
       card.style.top = `${n.y}px`;
       card.dataset.label = n.label;
@@ -2643,7 +2828,14 @@
         im.alt = '';
         thumb.appendChild(im);
       } else {
-        thumb.appendChild(el('div', 'map-placeholder', 'No shot yet'));
+        // An empty white rectangle claims to be a screenshot. Say what it is
+        // and what fills it.
+        const ph = el('div', 'map-placeholder');
+        ph.append(
+          el('span', 'map-ph-title', 'No picture yet'),
+          el('span', 'map-ph-note', state.role === 'designer' ? 'Open this screen once and it fills in' : 'Nobody has opened this screen yet')
+        );
+        thumb.appendChild(ph);
       }
       thumb.addEventListener('click', () => {
         closeMap();
@@ -2678,8 +2870,19 @@
           input.addEventListener('blur', done);
         });
       }
-      const count = el('div', 'map-countline', n.total ? `${n.open} open · ${n.total} total` : 'No comments');
-      card.append(thumb, name, count);
+      const meta = el('div', 'map-meta');
+      if (n.total) {
+        const chip = el('span', 'map-chip' + (n.open ? ' open' : ' done'), n.open ? `${n.open} open` : 'all done');
+        meta.appendChild(chip);
+        if (n.total !== n.open) meta.appendChild(el('span', 'map-total', `${n.total} total`));
+      } else {
+        meta.appendChild(el('span', 'map-total', 'No comments'));
+      }
+      const foot = el('div', 'map-foot');
+      foot.append(name, meta);
+      card.append(thumb, foot);
+      if (n.start) card.appendChild(el('span', 'map-flag start-flag', 'Start'));
+      if (n.current) card.appendChild(el('span', 'map-flag here-flag', 'You are here'));
       if (state.role === 'designer') {
         const hide = el('button', 'map-hide');
         hide.append(icon('close'));
@@ -2693,6 +2896,7 @@
       }
       canvas.appendChild(card);
     }
+
 
     // Pan (drag the background) and zoom (wheel), fit on open.
     const apply = () => (canvas.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.k})`);
@@ -2762,7 +2966,11 @@
       anchor,
       screen: state.screen,
       screenLabel: state.screenLabel,
-      trail: anchor.container ? trail.slice() : [],
+      // Always: the clicks that led here are what makes a comment recoverable,
+      // and a container is not always recognisable. A docked detail panel is
+      // part of the layout, not a floating layer, so findContainer() cannot
+      // see it — but the row that opens it is right here in the trail.
+      trail: trail.slice(),
     };
     draftPin = el('button', 'pin draft', '+');
     draftPin.style.left = `${e.clientX}px`;
@@ -2895,6 +3103,7 @@
         lastNavClick = null;
       }
       detectTheme();
+      if (state.screen !== prevScreen) autoShot();
       positionPins();
       checkPendingJump();
       // Prototypes mutate constantly (animations, timers); rebuilding the open
