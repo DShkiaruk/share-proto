@@ -240,8 +240,12 @@ export const applyTrail = (threads, tid, trail) =>
 export const applyPreview = (threads, tid, preview) =>
   threads.map((t) => (t.id === tid ? { ...t, preview } : t));
 
-export function navPatch(nav, from, to, anchor, at, cap = 500) {
-  const next = { ...nav, [`${from}>${to}`]: { anchor, at } };
+// `trail`: the in-screen clicks that made this transition's control reachable.
+// Without them a walk can arrive at the screen and find no button to press.
+export function navPatch(nav, from, to, anchor, at, cap = 500, trail = []) {
+  const key = `${from}>${to}`;
+  const kept = sanitizeTrail(trail).length ? sanitizeTrail(trail) : nav[key]?.trail || [];
+  const next = { ...nav, [key]: { anchor, at, ...(kept.length ? { trail: kept } : {}) } };
   const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
   while (keys.length > cap) delete next[keys.shift()];
   return next;

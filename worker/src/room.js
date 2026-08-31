@@ -175,9 +175,11 @@ export class Room {
     await this.load();
     const nav = {};
     const navAt = {};
+    const navTrail = {};
     for (const [k, v] of Object.entries(this.nav)) {
       nav[k] = v.anchor;
       navAt[k] = v.at;
+      if (v.trail?.length) navTrail[k] = v.trail;
     }
     return {
       v: 2,
@@ -185,6 +187,7 @@ export class Room {
       name: author,
       nav,
       navAt,
+      navTrail,
       versions: this.versions,
       shots: this.visibleShots(role),
       mapmeta:
@@ -232,7 +235,9 @@ export class Room {
         return err(400, 'Bad edge');
       }
       const key = `${from}>${to}`;
-      this.nav[key] = { anchor, at: now };
+      const edgeTrail = sanitizeTrail(body.trail);
+      const keep = edgeTrail.length ? edgeTrail : this.nav[key]?.trail || [];
+      this.nav[key] = { anchor, at: now, ...(keep.length ? { trail: keep } : {}) };
       await this.s.put(`n:${key}`, this.nav[key]);
       const keys = Object.keys(this.nav);
       if (keys.length > NAV_CAP) {

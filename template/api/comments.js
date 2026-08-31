@@ -38,6 +38,8 @@ function visibleShots(role, state) {
   return Object.fromEntries(Object.entries(shots).filter(([label]) => !hidden.has(label)));
 }
 const publicNav = (nav) => Object.fromEntries(Object.entries(nav).map(([k, v]) => [k, v.anchor]));
+const navTrails = (nav) =>
+  Object.fromEntries(Object.entries(nav).filter(([, v]) => v.trail?.length).map(([k, v]) => [k, v.trail]));
 
 export default async function handler(req, res) {
   if (applyCors(req, res, process.env.ALLOWED_ORIGINS)) return;
@@ -66,6 +68,7 @@ export default async function handler(req, res) {
       name: author,
       nav: publicNav(state.nav),
       navAt: Object.fromEntries(Object.entries(state.nav).map(([k, v]) => [k, v.at])),
+      navTrail: navTrails(state.nav),
       versions: state.versions || [],
       // Hiding a screen must actually hide it: a client gets neither its
       // screenshot nor the fact that something was hidden.
@@ -123,9 +126,10 @@ export default async function handler(req, res) {
     if (!from || !to || from === to || !anchor || JSON.stringify(anchor).length > 3000) {
       return res.status(400).json({ error: 'Bad edge' });
     }
-    await storage.appendEvent(`${root}nav/e-${ts(now)}-${uuid()}.json`, { from, to, anchor, at: now });
+    const edgeTrail = sanitizeTrail(body.trail);
+    await storage.appendEvent(`${root}nav/e-${ts(now)}-${uuid()}.json`, { from, to, anchor, at: now, trail: edgeTrail });
     const { state: navBase } = await store.loadState(root);
-    const { path } = await mutateOrDefer(navBase, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP) }));
+    const { path } = await mutateOrDefer(navBase, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP, edgeTrail) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ ok: true });
   }

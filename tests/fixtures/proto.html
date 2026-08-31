@@ -50,7 +50,16 @@
         </div>
       </div>
       <p><button id="open-dialog">Open dialog</button></p>
+      <!-- The way to Report exists only after "Advanced" is pressed: the link is
+           created, not merely revealed, so nothing can find it beforehand. This
+           is what a transition whose control depends on in-screen state looks
+           like. -->
+      <p id="adv-row"><button id="adv">Advanced</button></p>
       <dialog id="dlg"><h2>Confirm</h2><p>Dialog body text.</p><button id="dlg-close">Close</button></dialog>
+    </section>
+    <section data-route="report" hidden>
+      <h1>Report</h1>
+      <p>Quarterly totals.</p>
     </section>
     <section data-route="settings" hidden>
       <h1>Settings</h1>
@@ -79,6 +88,17 @@
     })
   );
   document.getElementById('details-close').addEventListener('click', () => (details.hidden = true));
+  const advRow = document.getElementById('adv-row');
+  document.getElementById('adv').addEventListener('click', () => {
+    if (document.getElementById('to-report')) return;
+    const a = document.createElement('a');
+    a.id = 'to-report';
+    a.href = '#/report';
+    a.textContent = 'Go to report';
+    a.style.marginLeft = '8px';
+    advRow.appendChild(a);
+  });
+  addEventListener('hashchange', () => document.getElementById('to-report')?.remove());
   document.getElementById('open-dialog').addEventListener('click', () => document.getElementById('dlg').showModal());
   document.getElementById('dlg-close').addEventListener('click', () => document.getElementById('dlg').close());
 </script>

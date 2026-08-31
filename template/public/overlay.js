@@ -520,6 +520,16 @@
     return a.split(' · ')[0] === b || b.split(' · ')[0] === a;
   }
 
+  // Arriving is stricter than matching. labelsMatch() is a prefix match on
+  // purpose — an old one-heading label still finds its screen — but standing on
+  // "Upload your first file" is not arriving at "Upload your first file · Add 1
+  // File To Search…". Without this, a walk toward a sub-state stopped on its
+  // parent and reported success.
+  function reachedLabel(target, here = screenLabel()) {
+    if (!labelsMatch(here, target)) return false;
+    return here === target || !target.startsWith(`${here} · `);
+  }
+
   // A comment lives on the PAGE it was left on.
   // Page check first: on multi-page prototypes two pages can share headings,
   // and a label match alone would render the pin on the wrong page.
@@ -871,6 +881,7 @@
           state.serverV = Number(data.v) || 1;
           state.nav = data.nav || {};
           state.navAt = data.navAt || {};
+          state.navTrail = data.navTrail || {};
           state.versions = data.versions || [];
           state.shots = data.shots || {};
           state.mapmeta = data.mapmeta || { aliases: {}, hidden: [] };
@@ -1798,12 +1809,16 @@
   // edges through them.
   const isFallbackLabel = (l) => l === (document.title || 'Screen');
 
-  function saveEdge(from, to, anchor) {
+  function saveEdge(from, to, anchor, edgeTrail = null) {
     if (!from || !to || from === to || !anchor) return;
     if (isFallbackLabel(from) || isFallbackLabel(to)) return;
     const key = `${from}>${to}`;
     const m = navMap();
-    const isNew = !m[key] && !state.nav[key];
+    // Re-record an edge the server knows but has no trail for: the click that
+    // opens it may only exist after some in-screen steps, and without them the
+    // walk stops one screen short.
+    const missingTrail = Boolean(edgeTrail?.length) && !(state.navTrail || {})[key]?.length;
+    const isNew = (!m[key] && !state.nav[key]) || missingTrail;
     m[key] = anchor;
     const keys = Object.keys(m);
     while (keys.length > 300) delete m[keys.shift()];
@@ -1812,7 +1827,10 @@
     // so "Go to comment" works even on paths this browser never took.
     if (isNew) {
       state.nav[key] = anchor;
-      api('POST', { action: 'edge', from, to, anchor }).catch(() => {
+      // Optimistically, like the edge itself: otherwise the walk cannot use what
+      // this browser just learned until the next poll, up to 25 s later.
+      if (edgeTrail?.length) (state.navTrail ||= {})[key] = edgeTrail;
+      api('POST', { action: 'edge', from, to, anchor, trail: edgeTrail || [] }).catch(() => {
         delete state.nav[key];
       });
     }
@@ -1900,7 +1918,8 @@
     return new Promise((resolve) => {
       const t0 = Date.now();
       const iv = setInterval(() => {
-        if (labelsMatch(screenLabel(), fp)) {
+        // Same rule as the walk: the parent of a sub-state is not the sub-state.
+        if (reachedLabel(fp)) {
           clearInterval(iv);
           resolve(true);
         } else if (Date.now() - t0 > timeout) {
@@ -1973,6 +1992,20 @@
 
   // Reproduce the state a comment was left in by replaying its trail until the
   // anchored element appears. Stops early at the first step that cannot be found.
+  // Replay a recorded sequence of in-screen clicks. Used both to reopen the
+  // state a comment was left in and to make a transition's control appear.
+  async function replaySteps(steps, until = null) {
+    for (let i = 0; i < steps.length; i++) {
+      if (until?.()) return true;
+      const loc = locateAnchor(steps[i].anchor);
+      if (!loc.el) continue; // a stale step must not block the ones that still resolve
+      synthClick(loc.el);
+      const next = steps[i + 1];
+      await waitFor(() => (until && until()) || (next && locateAnchor(next.anchor).el), 1500);
+    }
+    return Boolean(until?.());
+  }
+
   async function replayTrail(t) {
     const steps = t.trail || [];
     for (let i = 0; i < steps.length; i++) {
@@ -2043,7 +2076,7 @@
     try {
       for (let hop = 0; hop < 12; hop++) {
         const from = screenLabel();
-        if (labelsMatch(from, target)) return true;
+        if (reachedLabel(target, from)) return true;
         const route = findRoute(from, target, banned);
         if (!route || !route.length) {
           if (jump && bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
@@ -2059,7 +2092,17 @@
           return false;
         }
         const step = route[0];
-        const loc = locateAnchor(step.anchor);
+        let loc = locateAnchor(step.anchor);
+        if (!loc.el) {
+          // The control may only exist after some clicks on this screen. Replay
+          // the ones recorded with the edge, then look again.
+          const steps = (state.navTrail || {})[`${from}>${step.to}`];
+          if (steps?.length) {
+            await replaySteps(steps);
+            if (my !== trip) return false;
+            loc = locateAnchor(step.anchor);
+          }
+        }
         if (!loc.el) {
           banned.add(`${from}>${step.to}`);
           continue;
@@ -2069,7 +2112,7 @@
         if (my !== trip) return false; // a newer goTo took over
         if (!arrived) banned.add(`${from}>${step.to}`);
       }
-      return labelsMatch(screenLabel(), target);
+      return reachedLabel(target);
     } catch {
       return false;
     } finally {
@@ -2113,7 +2156,7 @@
   async function goToScreen(label) {
     if (navigating || reloading) return false; // a walk is already in flight
     const my = ++trip;
-    if (labelsMatch(screenLabel(), label)) return true;
+    if (reachedLabel(label)) return true;
     toastSticky(`Taking you to “${label}”…`);
     const jump = teleportAllowed(label) ? { key: 'fp_jump_label', value: label } : null;
     const ok = await navigateToLabel(graphTarget(label), my, jump);
@@ -3284,6 +3327,10 @@
       const prevScreen = state.screen;
       state.screen = screenLabel();
       state.screenLabel = screenLabel();
+      // The clicks taken on the screen we are leaving. The last of them is the
+      // transition itself; the ones before it are what made that control
+      // reachable — a button that only appears once a file is selected, say.
+      const leavingTrail = state.screen !== prevScreen ? trail.slice(0, -1) : null;
       if (state.screen !== prevScreen) {
         // Seed the new screen's trail with the click that caused the change — only if recent.
         trail = lastNavClick && Date.now() - lastNavClick.at < 2500 ? [trailStep(lastNavClick.anchor, lastNavClick.at)] : [];
@@ -3294,7 +3341,7 @@
         lastNavClick.from === prevScreen &&
         Date.now() - lastNavClick.at < 2500
       ) {
-        saveEdge(prevScreen, state.screen, lastNavClick.anchor);
+        saveEdge(prevScreen, state.screen, lastNavClick.anchor, leavingTrail);
         lastNavClick = null;
       }
       detectTheme();

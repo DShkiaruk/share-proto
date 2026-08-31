@@ -105,7 +105,7 @@ export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
       .filter((e) => e && e.from && e.to)
       .sort((a, b) => a.at - b.at);
     let nav = {};
-    for (const e of edges) nav = navPatch(nav, e.from, e.to, e.anchor, e.at, navCap);
+    for (const e of edges) nav = navPatch(nav, e.from, e.to, e.anchor, e.at, navCap, e.trail);
     const maxN = Math.max(0, ...threads.map((t) => t.n || 0));
     return { ...emptyState(), threads, nav, versions, shots, mapmeta, maxN, updatedAt: Date.now() };
   }

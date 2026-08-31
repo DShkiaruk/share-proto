@@ -357,3 +357,33 @@ test('the card composer can be dismissed, and gives the view back', async ({ pag
   await page.keyboard.press('Escape');
   await expect(inOverlay(page, '.map')).toHaveCount(0);
 });
+
+// Reported: clicking a card takes you to the screen before it and stops. The
+// graph records transitions between screens, but a transition's control can
+// depend on state inside the screen — a button that only appears after another
+// click. The edge now carries those clicks, and the walk replays them.
+test('a card whose transition needs an in-screen step still takes you there', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await page.goto('/#/home');
+  await page.waitForFunction(() => window.__fp?.state.screen === 'Home');
+
+  // Teach it the way once, by hand.
+  await page.locator('#adv').click();
+  await page.locator('#to-report').click();
+  await expect(page.locator('section[data-route="report"] h1')).toBeVisible();
+  await page.waitForFunction(() => window.__fp?.state.screen === 'Report', null, { timeout: 10_000 });
+  await expect
+    .poll(async () => (await apiGet(page, '/api/comments')).navTrail?.['Home>Report']?.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+
+  // Back to Home; the link is gone again, so nothing can find it.
+  await page.goto('/#/home');
+  await page.waitForFunction(() => window.__fp?.state.screen === 'Home');
+  await expect(page.locator('#to-report')).toHaveCount(0);
+
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  await mouseClick(page, inOverlay(page, '.map-node[data-label="Report"] .map-thumb'));
+  await expect(page.locator('section[data-route="report"] h1')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.evaluate(() => window.__fp.label()), { timeout: 10_000 }).toBe('Report');
+});

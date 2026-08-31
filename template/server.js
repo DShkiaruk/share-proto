@@ -249,12 +249,15 @@ async function apiComments(req, res, session) {
     for (const [k, v] of Object.entries(S.nav)) nav[k] = v.anchor;
     const navAt = {};
     for (const [k, v] of Object.entries(S.nav)) navAt[k] = v.at;
+    const navTrail = {};
+    for (const [k, v] of Object.entries(S.nav)) if (v.trail?.length) navTrail[k] = v.trail;
     return json(res, 200, {
       v: 2,
       role,
       name: author,
       nav,
       navAt,
+      navTrail,
       versions: S.versions || [],
       shots: visibleShots(role, S),
       mapmeta: role === 'designer'
@@ -280,7 +283,8 @@ async function apiComments(req, res, session) {
     if (!from || !to || from === to || !anchor || JSON.stringify(anchor).length > 3000) {
       return json(res, 400, { error: 'Bad edge' });
     }
-    S.nav[`${from}>${to}`] = { anchor, at: now };
+    const edgeTrail = sanitizeTrail(body.trail);
+    S.nav[`${from}>${to}`] = { anchor, at: now, ...((edgeTrail.length ? edgeTrail : S.nav[`${from}>${to}`]?.trail || []).length ? { trail: edgeTrail.length ? edgeTrail : S.nav[`${from}>${to}`].trail } : {}) };
     const keys = Object.keys(S.nav);
     if (keys.length > NAV_CAP) {
       keys.sort((a, b) => S.nav[a].at - S.nav[b].at);
