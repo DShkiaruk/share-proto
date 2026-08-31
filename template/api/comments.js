@@ -68,6 +68,18 @@ export default async function handler(req, res) {
   const body = req.body || {};
   const action = body.action;
   const now = Date.now();
+
+  // The append-only event is already durable by the time we patch the derived
+  // document. If that patch fails anyway, answer with what the event says and
+  // let the next rebuild catch up — answering 500 would invite a duplicate.
+  async function mutateOrDefer(base, patch) {
+    try {
+      return await store.mutate(root, patch);
+    } catch (e) {
+      console.warn(`state.json deferred (${e?.name}: ${e?.message}) — the event is on the log`);
+      return { state: { ...base, ...patch(base) }, path: 'deferred' };
+    }
+  }
   const eventPath = (tid) => `${root}threads/${tid}/${ts(now)}-${uuid()}.json`;
   // Attachments arrive as data URLs; the payload cap keeps the request under
   // the platform body limit. Pathnames are stored relative to <root>.
@@ -98,7 +110,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Bad edge' });
     }
     await storage.appendEvent(`${root}nav/e-${ts(now)}-${uuid()}.json`, { from, to, anchor, at: now });
-    const { path } = await store.mutate(root, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP) }));
+    const { state: navBase } = await store.loadState(root);
+    const { path } = await mutateOrDefer(navBase, (s) => ({ nav: navPatch(s.nav, from, to, anchor, now, NAV_CAP) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ ok: true });
   }
@@ -136,7 +149,7 @@ export default async function handler(req, res) {
       messages: [firstMsg],
     };
     await storage.appendEvent(eventPath(tid), { type: 'msg', ...firstMsg, first });
-    const { state, path } = await store.mutate(root, (s) => {
+    const { state, path } = await mutateOrDefer(before, (s) => {
       const threads = applyCreate(s.threads, thread);
       return { threads, maxN: Math.max(s.maxN || 0, ...threads.map((t) => t.n || 0)) };
     });
@@ -153,7 +166,8 @@ export default async function handler(req, res) {
     const rel = `shots/${labelKey(label)}/${ts(now)}.${img.ext}`;
     await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
     await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now });
-    const { path } = await store.mutate(root, (s) => ({ shots: applyShot(s.shots, { label, path: rel }) }));
+    const { state: shotBase } = await store.loadState(root);
+    const { path } = await mutateOrDefer(shotBase, (s) => ({ shots: applyShot(s.shots, { label, path: rel }) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ path: rel });
   }
@@ -165,7 +179,8 @@ export default async function handler(req, res) {
     if (typeof body.show === 'string') ev.show = clean(body.show, 120);
     if (!ev.alias?.label && !ev.hide && !ev.show) return res.status(400).json({ error: 'Nothing to change' });
     await storage.appendEvent(`${root}mapmeta/${ts(now)}-${uuid()}.json`, ev);
-    const { state, path } = await store.mutate(root, (s) => ({ mapmeta: applyMapMeta(s.mapmeta, ev) }));
+    const { state: metaBase } = await store.loadState(root);
+    const { state, path } = await mutateOrDefer(metaBase, (s) => ({ mapmeta: applyMapMeta(s.mapmeta, ev) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ mapmeta: state.mapmeta });
   }
@@ -183,7 +198,7 @@ export default async function handler(req, res) {
     if (action === 'version-label' && !known) return res.status(404).json({ error: 'Unknown version' });
     if (action === 'version' && (cur.versions || []).length >= 100) return res.status(400).json({ error: 'Too many versions' });
     await storage.appendEvent(`${root}versions/${ts(now)}-${uuid()}.json`, ev);
-    const { state, path } = await store.mutate(root, (s) => ({ versions: applyVersionEvent(s.versions, ev) }));
+    const { state, path } = await mutateOrDefer(cur, (s) => ({ versions: applyVersionEvent(s.versions, ev) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ ok: true, versions: state.versions });
   }
@@ -207,7 +222,7 @@ export default async function handler(req, res) {
     if (label && !(cur.shots || {})[label]) {
       await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now, from: 'preview' });
     }
-    const { path } = await store.mutate(root, (s) => ({
+    const { path } = await mutateOrDefer(cur, (s) => ({
       threads: applyPreview(s.threads, tid, rel),
       shots: label && !(s.shots || {})[label] ? applyShot(s.shots, { label, path: rel }) : s.shots,
     }));
@@ -285,7 +300,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { state, path } = await store.mutate(root, patch);
+  const { state, path } = await mutateOrDefer(cur, patch);
   res.setHeader('X-Store-Path', path);
   if (action === 'delete') return res.status(200).json({ ok: true });
   return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });

@@ -18,6 +18,19 @@ const JSON_OPTS = { access: ACCESS, addRandomSuffix: false, contentType: 'applic
 // Found on the lab: every state.json write "conflicted" until this strip.
 export const normalizeEtag = (etag) => (etag ? String(etag).replace(/^W\//, '') : null);
 
+// Which write failures mean "someone else got there first" (retry) rather than
+// "this store is broken" (fail loudly). Blob reports the two cases differently:
+// a stale ETag is a BlobPreconditionFailedError, while two conditional writes
+// colliding in flight arrive as a plain BlobError whose message names a
+// "conflicting operation" — both are conflicts.
+export function isWriteConflict(error, { ifAbsent = false } = {}) {
+  if (!error) return false;
+  if (error instanceof BlobPreconditionFailedError) return true;
+  const msg = String(error.message || '');
+  if (/conflicting operation/i.test(msg)) return true;
+  return ifAbsent && /already exists/i.test(msg);
+}
+
 export class ConflictError extends Error {
   constructor(pathname) {
     super(`conflict writing ${pathname}`);
@@ -54,8 +67,7 @@ export async function writeJson(pathname, data, { ifMatch, ifAbsent } = {}) {
     });
     return { etag: res.etag };
   } catch (e) {
-    if (e instanceof BlobPreconditionFailedError) throw new ConflictError(pathname);
-    if (ifAbsent && /already exists/i.test(e?.message || '')) throw new ConflictError(pathname);
+    if (isWriteConflict(e, { ifAbsent })) throw new ConflictError(pathname);
     throw e;
   }
 }

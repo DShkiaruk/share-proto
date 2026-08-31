@@ -40,4 +40,21 @@ DELETE='{"action":"delete","threadId":"'"$TID"'"}'
 check "$(code -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$DELETE" "$D/api/comments")" 200 "cleanup: delete smoke thread"
 check "$(code "$D/api/file?p=previews/x/y.jpg")" 401 "GET /api/file without cookie → 401"
 
+# Concurrency: parallel writers must retry, never 500 (Blob reports an in-flight
+# collision differently from a stale ETag, and the difference used to leak out).
+RACE_TMP=$(mktemp -d)
+for i in 1 2 3 4 5 6; do
+  ( curl -s -o "$RACE_TMP/$i.json" -w '%{http_code}\n' -b "$TMP/team.jar" -H 'Content-Type: application/json' \
+      -d "{\"action\":\"create\",\"text\":\"smoke race $i\",\"screen\":\"smoke\",\"screenLabel\":\"smoke\",\"anchor\":{\"path\":\"body\"}}" \
+      "$D/api/comments" > "$RACE_TMP/$i.code" ) &
+done
+wait
+check "$(cat "$RACE_TMP"/*.code | sort -u | tr -d '\n')" 200 "6 concurrent comments all succeed"
+check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'ns=[t["n"] for t in d["threads"] if t["messages"][0]["text"].startswith("smoke race ")]; print(len(ns), len(set(ns)))')" "6 6" "6 concurrent comments, 6 unique numbers"
+for id in $(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(" ".join(t["id"] for t in d["threads"] if t["messages"][0]["text"].startswith("smoke race ")))'); do
+  curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "{\"action\":\"delete\",\"threadId\":\"$id\"}" "$D/api/comments"
+done
+check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(sum(1 for t in d["threads"] if t["messages"][0]["text"].startswith("smoke race ")))')" 0 "cleanup: race comments removed"
+rm -rf "$RACE_TMP"
+
 [ $fail = 0 ] && echo "ALL OK" || { echo "SMOKE FAILED"; exit 1; }

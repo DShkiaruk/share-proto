@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta } from '../../template/lib/state.js';
+import { isWriteConflict } from '../../template/lib/storage.js';
 import { applyCreate } from '../../template/lib/threads.js';
 import { normalizeEtag } from '../../template/lib/storage.js';
 
@@ -171,4 +172,15 @@ test('rebuild folds shotlog and mapmeta events', async () => {
   const s = await createStateStore(st).rebuild('');
   assert.deepEqual(s.shots, { Home: 'shots/a/1.jpg' });
   assert.deepEqual(s.mapmeta, { aliases: { Home: 'Start' }, hidden: [] });
+});
+
+test('isWriteConflict recognises both ways Blob reports a lost race', () => {
+  // Observed on a real deployment: eight concurrent creates, two of which failed
+  // with this message and were answered 500 instead of being retried.
+  const inFlight = new Error('Vercel Blob: The conditional request cannot succeed due to a conflicting operation against this resource.');
+  assert.equal(isWriteConflict(inFlight), true);
+  assert.equal(isWriteConflict(new Error('Vercel Blob: This blob already exists')), false);
+  assert.equal(isWriteConflict(new Error('Vercel Blob: This blob already exists'), { ifAbsent: true }), true);
+  assert.equal(isWriteConflict(new Error('Vercel Blob: Access denied')), false);
+  assert.equal(isWriteConflict(null), false);
 });
