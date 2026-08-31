@@ -2978,7 +2978,9 @@
         focusNode(n);
         let box;
         box = composeRow({
-          placeholder: `Comment on ${n.name}…`,
+          // Short: the card above it already says which screen this is, and a
+          // long placeholder wraps out of a one-row textarea.
+          placeholder: 'Comment on this screen…',
           bordered: true,
           onSubmit: async () => {
             const text = box.ta.value.trim();
