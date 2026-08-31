@@ -15,7 +15,7 @@ python3 -c "import json; d=json.load(open('export.json')); print(len(d['threads'
 
 ## 2. Create a private store and seed it
 
-In the project directory (the one with `.vercel/`):
+In the project directory (the one with `.vercel/`). **Disconnect the old store first** — otherwise `BLOB_READ_WRITE_TOKEN` still points at it and the seed would write v2 events into the v1 store (silently: the rebuild then returns nothing). Dashboard → Storage → the old store → Disconnect from this project.
 
 ```bash
 vercel blob create-store <name>-comments-v2 --access private   # answer "y" to link, Enter for all environments
@@ -25,7 +25,7 @@ set -a; source <project>/.env.v2; set +a
 node scripts/seed.mjs <project>/export.json                     # idempotent — safe to re-run
 ```
 
-If the old store was linked as well, remove its `BLOB_READ_WRITE_TOKEN` from the project (dashboard → Storage → old store → Disconnect) so the new one is the only token.
+Check you pulled the new store's token before seeding: `grep BLOB_READ_WRITE_TOKEN .env.v2` must show exactly one line, and `vercel blob list-stores` should show only the new store connected to this project.
 
 ## 3. Replace the code
 

@@ -89,11 +89,11 @@ const SECRETS = loadSecrets();
 
 // Rooms partition comments (one per PR preview in embed mode); classic
 // same-origin traffic lives in room "_". Old flat files migrate on load.
-let store = { rooms: {} };
+let store = { rooms: Object.create(null) };
 try {
   const loaded = JSON.parse(fs.readFileSync(COMMENTS_FILE, 'utf8'));
   if (loaded.rooms && typeof loaded.rooms === 'object') {
-    store.rooms = loaded.rooms;
+    store.rooms = Object.assign(Object.create(null), loaded.rooms);
   } else if (Array.isArray(loaded.threads)) {
     store.rooms['_'] = { threads: loaded.threads, nav: loaded.nav || {} };
   }
@@ -135,6 +135,16 @@ async function putFileLocal(room, rel, buf) {
   if (!file.startsWith(FILES + path.sep)) throw new Error('bad path');
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await fsp.writeFile(file, buf);
+}
+
+const MAX_SHOTS = 200;
+
+// Screens the designer hid are dropped from a client's copy of the map.
+function visibleShots(role, S) {
+  const shots = S.shots || {};
+  if (role === 'designer') return shots;
+  const hidden = new Set(S.mapmeta?.hidden || []);
+  return Object.fromEntries(Object.entries(shots).filter(([label]) => !hidden.has(label)));
 }
 
 async function storeImagesLocal(room, tid, kind, images, now) {
@@ -245,8 +255,10 @@ async function apiComments(req, res, session) {
       nav,
       navAt,
       versions: S.versions || [],
-      shots: S.shots || {},
-      mapmeta: S.mapmeta || { aliases: {}, hidden: [] },
+      shots: visibleShots(role, S),
+      mapmeta: role === 'designer'
+        ? S.mapmeta || { aliases: {}, hidden: [] }
+        : { aliases: S.mapmeta?.aliases || {}, hidden: [] },
       threads: S.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -313,9 +325,16 @@ async function apiComments(req, res, session) {
     const label = clean(body.label, 120);
     const img = parseImageDataUrl(body.image);
     if (!label || !img) return json(res, 400, { error: 'Bad shot' });
-    const rel = `shots/${labelKey(label)}/${String(now).padStart(14, '0')}.${img.ext}`;
+    const previous = (S.shots || {})[label];
+    if (!previous && Object.keys(S.shots || {}).length >= MAX_SHOTS) {
+      return json(res, 400, { error: 'Too many screens' });
+    }
+    const rel = `shots/${labelKey(label)}/${String(now).padStart(14, '0')}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     S.shots = applyShot(S.shots, { label, path: rel });
+    if (previous && previous.startsWith('shots/')) {
+      await fsp.rm(path.join(FILES, room ? `rooms/${room}/` : '', previous), { force: true }).catch(() => {});
+    }
     await persist();
     return json(res, 200, { path: rel });
   }
@@ -326,7 +345,11 @@ async function apiComments(req, res, session) {
     if (typeof body.hide === 'string') ev.hide = clean(body.hide, 120);
     if (typeof body.show === 'string') ev.show = clean(body.show, 120);
     if (!ev.alias?.label && !ev.hide && !ev.show) return json(res, 400, { error: 'Nothing to change' });
-    S.mapmeta = applyMapMeta(S.mapmeta, ev);
+    const nextMeta = applyMapMeta(S.mapmeta, ev);
+    if (JSON.stringify(nextMeta) === JSON.stringify(applyMapMeta(S.mapmeta, null))) {
+      return json(res, 200, { mapmeta: nextMeta });
+    }
+    S.mapmeta = nextMeta;
     await persist();
     return json(res, 200, { mapmeta: S.mapmeta });
   }
@@ -360,7 +383,13 @@ async function apiComments(req, res, session) {
     const rel = `previews/${tid}/${String(now).padStart(14, '0')}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     thread.preview = rel;
-    if (thread.screenLabel && !(S.shots || {})[thread.screenLabel]) S.shots = applyShot(S.shots, { label: thread.screenLabel, path: rel });
+    // A screen with no shot borrows this picture as its own copy under shots/:
+    // a previews/ path is gated on the thread and would 404 for the client.
+    if (thread.screenLabel && !(S.shots || {})[thread.screenLabel]) {
+      const shotRel = `shots/${labelKey(thread.screenLabel)}/${String(now).padStart(14, '0')}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`;
+      await putFileLocal(room, shotRel, img.buf);
+      S.shots = applyShot(S.shots, { label: thread.screenLabel, path: shotRel, from: 'preview' });
+    }
     await persist();
     return json(res, 200, { preview: rel });
   }
@@ -518,7 +547,12 @@ const server = http.createServer(async (req, res) => {
       if (!SAFE_FILE.test(rel)) return json(res, 400, { error: 'Bad path' });
       const room = roomFromReq(req);
       const [kind, key] = rel.split('/');
-      if (kind !== 'shots') {
+      if (kind === 'shots') {
+        if (s2.r !== 'designer') {
+          const hidden = (roomStore(room).mapmeta?.hidden || []).map(labelKey);
+          if (hidden.includes(key)) return json(res, 404, { error: 'Not found' });
+        }
+      } else {
         const t = roomStore(room).threads.find((x) => x.id === key);
         if (!t || !canSee(s2.r, t)) return json(res, 404, { error: 'Not found' });
       }

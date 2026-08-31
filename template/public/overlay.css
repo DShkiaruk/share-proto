@@ -1096,9 +1096,6 @@
   margin: 0;
   flex: 1;
 }
-.sb-controls .sort {
-  align-self: flex-end;
-}
 .status-seg button {
   flex: 1 1 0;
   min-width: 0;
@@ -1271,6 +1268,8 @@
 .sb-row .eye svg { width: 16px; height: 16px; }
 @media (pointer: coarse) {
   .sb-row .eye { display: grid; place-items: center; }
+  .status { min-height: 34px; padding: 8px 12px; }
+  .status-menu > button { padding: 10px; }
 }
 .popover-preview {
   display: block;
@@ -1602,14 +1601,13 @@
   white-space: nowrap;
 }
 .popover .head .who .badge,
-.popover .head .who .num,
-.popover .head .who .nav-pos {
+.popover .head .who .num {
   flex: none;
   white-space: nowrap;
 }
 .popover .head .status { flex: none; }
 /* Small secondary text at AA. */
-.badge, .map-edge-label, .sb-group, .status-tag, .replies, .ver-meta, .map-countline, .preview-card .meta, .sb-note {
+.badge, .map-edge-label, .sb-group, .status-tag, .sb-row .replies, .ver-meta, .map-countline, .preview-card .meta, .sb-note {
   color: var(--muted-fg-2);
 }
 .map-edge-label { fill: var(--muted-fg-2); }
@@ -1618,24 +1616,28 @@
 .sb-row2 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 6px 16px 0;
 }
-.sb-row2 .chips { padding: 0; }
+.sb-row2 .chips { padding: 0; margin-right: auto; }
 .sb-row2 .sort { align-self: auto; }
 
 /* Thread header: identity on one line, state on the next, so neither squeezes
    the other when a name is long or a status label is wide. */
-.popover .head .who { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.popover .head { border-bottom: 0; }
+.popover .head,
+.popover .head-meta,
+.popover .compose {
+  flex: none; /* the message list is what gives way when the popover is capped */
+}
 .head-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px 8px;
+  padding: 2px 14px 10px;
   border-bottom: 1px solid var(--border);
 }
-.head-meta .nav-pos { margin-left: auto; }
 .in-container {
   font-size: 11px;
   color: var(--muted-fg-2);

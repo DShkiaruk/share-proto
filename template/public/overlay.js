@@ -303,7 +303,10 @@
     const rootEl = appRoot();
     const tagged =
       rootEl.getAttribute?.('data-screen') || rootEl.firstElementChild?.getAttribute?.('data-screen');
-    if (tagged && tagged.trim()) return tagged.trim().slice(0, 80);
+    // ">" is the separator in navigation-graph keys ("A>B"); a heading that
+    // contains one would split into two phantom screens.
+    const safe = (l) => l.replace(/>/g, '›');
+    if (tagged && tagged.trim()) return safe(tagged.trim().slice(0, 80));
     const parts = [];
     for (const hd of rootEl.querySelectorAll('h1, h2, h3')) {
       const t = (hd.innerText || '').trim().slice(0, 40);
@@ -312,13 +315,13 @@
         if (parts.length === 2) break;
       }
     }
-    if (parts.length) return parts.join(' · ');
-    if (location.hash.length > 1) return location.hash.slice(1).slice(0, 80);
+    if (parts.length) return safe(parts.join(' · '));
+    if (location.hash.length > 1) return safe(location.hash.slice(1).slice(0, 80));
     for (const n of rootEl.querySelectorAll('h4, h5, h6, [role="heading"], legend, strong')) {
       const t = (n.innerText || '').trim();
-      if (t && t.length <= 40 && n.getClientRects().length) return t;
+      if (t && t.length <= 40 && n.getClientRects().length) return safe(t);
     }
-    return document.title || 'Screen';
+    return safe(document.title || 'Screen');
   }
 
   /* ---------- anchors ---------- */
@@ -829,12 +832,13 @@
               t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
             ]),
             state.versions.map((v) => [v.id, v.label]),
-            Object.keys(state.shots), state.mapmeta, Object.keys(state.nav).length,
+            Object.entries(state.shots), state.mapmeta, Object.keys(state.nav).sort(),
           ]);
           if (sig !== lastSig) {
             lastSig = sig;
             renderAll();
-            if (state.map) renderMap();
+            // Never rebuild the map out from under a rename in progress.
+            if (state.map && !mapEl?.querySelector('.map-rename')) renderMap();
           }
           // Live-update an open thread when new replies arrive — unless the
           // viewer is mid-typing a reply.
@@ -1139,7 +1143,9 @@
     lastPopAnchor = { x, y };
     // Visual viewport shrinks when the mobile keyboard opens; clamp to it so
     // the composer never hides behind the keyboard.
-    const vw = window.visualViewport ? window.visualViewport.width : innerWidth;
+    // documentElement.clientWidth excludes the scrollbar — the same box the CSS
+    // `100vw` term does not, which used to let a right-edge popover overhang.
+    const vw = Math.min(document.documentElement.clientWidth || innerWidth, window.visualViewport ? window.visualViewport.width : innerWidth);
     const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
     const w = Math.min(340, vw - 24);
     const h = Math.min(popover.offsetHeight || 200, vh - 24);
@@ -1326,9 +1332,11 @@
   // Status menu: clients toggle Open/Done; designers get all four statuses,
   // a required reason for "Won't do", and the comment kind.
   let statusMenu = null;
+  let statusAnchor = null;
   function closeStatusMenu() {
     statusMenu?.remove();
     statusMenu = null;
+    statusAnchor = null;
   }
   async function postThread(body, okToast) {
     try {
@@ -1351,6 +1359,7 @@
   }
   function toggleStatusMenu(t, anchorBtn) {
     if (statusMenu) return closeStatusMenu();
+    statusAnchor = anchorBtn;
     statusMenu = el('div', 'status-menu');
     statusMenu.setAttribute('role', 'menu');
     const options = state.role === 'designer' ? ['open', 'progress', 'done', 'wont'] : ['open', 'done'];
@@ -1383,7 +1392,12 @@
     popover.appendChild(statusMenu);
     const r = anchorBtn.getBoundingClientRect();
     const pr = popover.getBoundingClientRect();
-    statusMenu.style.top = `${r.bottom - pr.top + 6}px`;
+    const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
+    // Open downwards unless that would push the last option off-screen.
+    const below = r.bottom + statusMenu.offsetHeight + 12 <= vh;
+    statusMenu.style.top = below
+      ? `${r.bottom - pr.top + 6}px`
+      : `${Math.max(4, r.top - pr.top - statusMenu.offsetHeight - 6)}px`;
     statusMenu.style.left = `${Math.max(8, r.left - pr.left)}px`;
   }
   function askWontNote(t) {
@@ -1953,6 +1967,11 @@
           if (jump && bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
             localStorage.setItem(jump.key, jump.value);
             reloading = true;
+            // If the reload is refused (an unsaved-changes prompt), navigation
+            // must not stay dead for the rest of the session.
+            setTimeout(() => {
+              reloading = false;
+            }, 5000);
             location.reload();
           }
           return false;
@@ -1996,11 +2015,26 @@
   }
 
   // Map → screen: same walk, no thread at the end.
+  // One teleport per label per session: a prototype that moves on its own right
+  // after boot would otherwise reload forever.
+  function teleportAllowed(label) {
+    try {
+      const key = `fp_tp::${label}`;
+      if (sessionStorage.getItem(key)) return false;
+      sessionStorage.setItem(key, '1');
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
   async function goToScreen(label) {
+    if (navigating || reloading) return false; // a walk is already in flight
     const my = ++trip;
     if (labelsMatch(screenLabel(), label)) return true;
     toastSticky(`Taking you to “${label}”…`);
-    const ok = await navigateToLabel(graphTarget(label), my, { key: 'fp_jump_label', value: label });
+    const jump = teleportAllowed(label) ? { key: 'fp_jump_label', value: label } : null;
+    const ok = await navigateToLabel(graphTarget(label), my, jump);
     if (my !== trip || reloading) return ok;
     clearSticky();
     syncScreen();
@@ -2637,7 +2671,8 @@
     if (fit) {
       const vw = mapEl.clientWidth || innerWidth;
       const vh = (mapEl.clientHeight || innerHeight) - 56;
-      mapView.k = Math.min(1, (vw - 80) / Math.max(1, W), (vh - 80) / Math.max(1, H));
+      // 0.3 is the wheel's floor: fitting past it would strand the view.
+      mapView.k = Math.max(0.3, Math.min(1, (vw - 80) / Math.max(1, W), (vh - 80) / Math.max(1, H)));
       mapView.x = Math.max(24, (vw - W * mapView.k) / 2);
       mapView.y = Math.max(24, (vh - H * mapView.k) / 2);
     }
@@ -2795,7 +2830,9 @@
     'pointerdown',
     (e) => {
       if (hoverCard && !e.composedPath().some((n) => n === hoverCard || n.classList?.contains('eye'))) hidePreviewCard();
-      if (statusMenu && !e.composedPath().includes(statusMenu)) closeStatusMenu();
+      // The chip itself toggles: closing here first would let its click reopen.
+      const path = e.composedPath();
+      if (statusMenu && !path.includes(statusMenu) && !path.includes(statusAnchor)) closeStatusMenu();
       if (!popover && !state.draft) return;
       if (e.composedPath().includes(host)) return;
       if (state.draft) cancelDraft();

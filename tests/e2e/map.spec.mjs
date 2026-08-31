@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { login, mouseClick, inOverlay, apiGet } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiGet, apiPost } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -61,12 +61,35 @@ test('M opens the map; a node navigates; the designer can rename and hide', asyn
   await expect(map).toHaveCount(0);
 });
 
-test('the client gets a read-only map', async ({ page }) => {
+test('the client gets a read-only map — enforced by the server, not the DOM', async ({ page }) => {
   await login(page, 'Client', CLIENT);
+  const jpeg = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]).toString('base64');
+  expect(await apiPost(page, { action: 'shot', label: 'Home', image: jpeg })).toBe(403);
+  expect(await apiPost(page, { action: 'mapmeta', hide: 'Home' })).toBe(403);
+  expect(await apiPost(page, { action: 'mapmeta', alias: { label: 'Home', name: 'Owned' } })).toBe(403);
   await page.mouse.click(600, 720);
   await page.keyboard.press('KeyM');
   await expect(inOverlay(page, '.map')).toBeVisible();
   expect(await inOverlay(page, '.map-node').count()).toBeGreaterThanOrEqual(2);
   await expect(inOverlay(page, '.map-hide')).toHaveCount(0);
   await expect(inOverlay(page, '.map-hidden-toggle')).toHaveCount(0);
+});
+
+test('a hidden screen is hidden from the client — its shot too, not just its node', async ({ page, browser }) => {
+  const designer = page;
+  await login(designer, 'Designer', TEAM);
+  const before = await apiGet(designer, '/api/comments');
+  const shotPath = before.shots.Settings;
+  expect(shotPath).toMatch(/^shots\//);
+  expect(await apiPost(designer, { action: 'mapmeta', hide: 'Settings' })).toBe(200);
+
+  const client = await browser.newPage();
+  await login(client, 'Client', CLIENT);
+  const seen = await apiGet(client, '/api/comments');
+  expect(seen.shots.Settings).toBeUndefined(); // not even the label
+  expect(seen.mapmeta.hidden).toEqual([]); // nor the fact that something is hidden
+  expect((await client.request.get(`/api/file?p=${encodeURIComponent(shotPath)}`)).status()).toBe(404);
+  expect((await designer.request.get(`/api/file?p=${encodeURIComponent(shotPath)}`)).status()).toBe(200);
+
+  expect(await apiPost(designer, { action: 'mapmeta', show: 'Settings' })).toBe(200);
 });

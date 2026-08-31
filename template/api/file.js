@@ -2,6 +2,7 @@ import { Readable, pipeline } from 'node:stream';
 import * as storage from '../lib/storage.js';
 import { createStateStore } from '../lib/state.js';
 import { canSee } from '../lib/threads.js';
+import { labelKey } from '../lib/state.js';
 
 const store = createStateStore(storage);
 import { sessionFromHeaders } from '../lib/session.js';
@@ -35,7 +36,15 @@ export default async function handler(req, res) {
   if (!SAFE.test(rel) || rel.includes('..')) return res.status(400).json({ error: 'Bad path' });
 
   const [kind, key] = rel.split('/');
-  if (kind !== 'shots') {
+  if (kind === 'shots') {
+    // Screens the designer hid are hidden from the client here too, not only
+    // in the map's rendering.
+    if (session.r !== 'designer') {
+      const { state } = await store.loadState(root);
+      const hidden = (state.mapmeta?.hidden || []).map(labelKey);
+      if (hidden.includes(key)) return res.status(404).json({ error: 'Not found' });
+    }
+  } else {
     const { state } = await store.loadState(root);
     const thread = state.threads.find((t) => t.id === key);
     if (!thread || !canSee(session.r, thread)) return res.status(404).json({ error: 'Not found' });

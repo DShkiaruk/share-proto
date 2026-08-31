@@ -17,9 +17,16 @@ export const emptyState = () => ({
 export const labelKey = (label) =>
   Buffer.from(String(label), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 80) || '_';
 
-// shotlog/<ts>-<uuid>.json {label, path, at}: latest path per label wins.
-export const applyShot = (shots, ev) =>
-  ev && typeof ev.label === 'string' && typeof ev.path === 'string' ? { ...(shots || {}), [ev.label]: ev.path } : shots || {};
+// shotlog/<ts>-<uuid>.json {label, path, at, from?}: the latest path per label
+// wins — except a shot borrowed from a comment preview (`from: 'preview'`),
+// which only ever fills an empty slot. Otherwise a rebuild would replay the
+// preview event over a real crawler shot taken earlier.
+export function applyShot(shots, ev) {
+  const cur = shots || {};
+  if (!ev || typeof ev.label !== 'string' || typeof ev.path !== 'string') return cur;
+  if (ev.from === 'preview' && cur[ev.label]) return cur;
+  return { ...cur, [ev.label]: ev.path };
+}
 
 // mapmeta/<ts>-<uuid>.json {alias?: {label, name}, hide?: label, show?: label, at}
 export function applyMapMeta(meta, ev) {

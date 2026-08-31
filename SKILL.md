@@ -193,7 +193,7 @@ Then briefly, in prose:
 ## Notes
 
 - Vercel Hobby plan formally requires Pro for commercial/client work; the deploy works either way — mention it once.
-- The overlay is design-neutral (near-black on white, Geist). If the prototype's brand clashes hard, you may re-tint the CSS variables at the top of `public/overlay.css` — optional, don't gold-plate.
+- The overlay is design-neutral (near-black on white, the platform UI face). If the prototype's brand clashes hard, you may re-tint the CSS variables at the top of `public/overlay.css` — optional, don't gold-plate.
 - Multi-page prototypes (several HTML files): put extra pages in `public/` and inject the overlay tag into each; comments work per-page automatically. Threads remember their page (`page` field), so "Go to comment" navigates across pages by direct URL + deep link — no learned click-graph needed between files.
 - Snapshot sets (frozen pages saved from a real app, e.g. SingleFile exports — scripts stripped, buttons dead): same as multi-page, plus generate a minimal neutral `index.html` listing the screens (styled like login.html), because frozen pages have no working navigation of their own. Reviewers browse via the index; "Go to comment" still teleports them directly.
 

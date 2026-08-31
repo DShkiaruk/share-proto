@@ -10,6 +10,10 @@ export async function login(page, name, password) {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.waitForSelector('[data-fp-host]', { timeout: 15_000 });
+  // The toolbar changes width when the first poll lands (the thread count
+  // appears), so clicking by coordinates before that is aiming at a moving
+  // target. Wait until the overlay has its data.
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role), null, { timeout: 15_000 });
 }
 
 // Click by real coordinates: the overlay's click-layer swallows synthetic

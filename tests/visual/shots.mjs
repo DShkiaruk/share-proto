@@ -49,7 +49,12 @@ const click = async (page, loc) => {
   await d.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = ''));
   await api(d, { action: 'shot', label: 'Home', image: 'data:image/jpeg;base64,' + shot.toString('base64') });
   await api(d, { action: 'shot', label: 'Settings', image: 'data:image/jpeg;base64,' + shot.toString('base64') });
+  await api(d, { action: 'shot', label: 'Home · Confirm', image: 'data:image/jpeg;base64,' + shot.toString('base64') });
+  // Enough edges that labels can collide — a two-node map proves nothing about layout.
   await api(d, { action: 'edge', from: 'Home', to: 'Settings', anchor: { path: 'header > a:nth-of-type(2)', t: 'a', txt: 'Settings' } });
+  await api(d, { action: 'edge', from: 'Home', to: 'Home · Confirm', anchor: { path: 'p > button', t: 'button', txt: 'Open dialog' } });
+  await api(d, { action: 'edge', from: 'Home · Confirm', to: 'Home', anchor: { path: 'dialog > button', t: 'button', txt: 'Close' } });
+  await api(d, { action: 'edge', from: 'Settings', to: 'Home', anchor: { path: 'header > a:nth-of-type(1)', t: 'a', txt: 'Home' } });
   await d.close();
   const c2 = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await login(c2, 'Olena (client)', 'client-e2e');
@@ -61,28 +66,60 @@ const click = async (page, loc) => {
 const CONTRAST_JS = `(() => {
   const host = document.querySelector('[data-fp-host]'); const r = host.shadowRoot;
   const parse = (c) => {
-    if (!c || c === 'transparent') return null;
+    if (!c || c === 'transparent' || c === 'none') return null;
+    // The alpha default must be a *number*: '1' turns the compositing sum into
+    // string concatenation and every ratio comes out near 1.
+    const alpha = (v) => (v === undefined || !Number.isFinite(v) ? 1 : v);
     const rgb = c.match(/rgba?\\(([^)]+)\\)/);
-    if (rgb) { const [R,G,B,A='1'] = rgb[1].split(/[ ,\\/]+/).map(Number); return { r:R, g:G, b:B, a: isNaN(A) ? 1 : A }; }
+    if (rgb) { const [R,G,B,A] = rgb[1].split(/[ ,\\/]+/).map(Number); return { r:R, g:G, b:B, a: alpha(A) }; }
     // color-mix() and modern syntaxes compute to color(srgb r g b / a) with 0..1 channels.
     const srgb = c.match(/color\\(srgb ([^)]+)\\)/);
-    if (srgb) { const [R,G,B,A='1'] = srgb[1].split(/[ ,\\/]+/).map(Number); return { r:R*255, g:G*255, b:B*255, a: isNaN(A) ? 1 : A }; }
+    if (srgb) { const [R,G,B,A] = srgb[1].split(/[ ,\\/]+/).map(Number); return { r:R*255, g:G*255, b:B*255, a: alpha(A) }; }
     return null;
   };
   const lum = ({r,g,b}) => { const f = (v) => { v/=255; return v <= .03928 ? v/12.92 : ((v+.055)/1.055)**2.4; }; return .2126*f(r)+.7152*f(g)+.0722*f(b); };
-  const blend = (fg, bg) => ({ r: fg.r*fg.a + bg.r*(1-fg.a), g: fg.g*fg.a + bg.g*(1-fg.a), b: fg.b*fg.a + bg.b*(1-fg.a), a: 1 });
-  const bgOf = (el) => { let n = el; let acc = null; while (n && n !== r) { const c = parse(getComputedStyle(n).backgroundColor); if (c && c.a > 0) { acc = acc ? blend(acc, c) : c; if (acc.a >= 1 && c.a >= 1) return acc; } n = n.parentElement || n.getRootNode()?.host; } const bodyBg = parse(getComputedStyle(document.body).backgroundColor); const page = bodyBg && bodyBg.a > 0 ? bodyBg : { r:255,g:255,b:255,a:1 }; return acc ? blend(acc, page) : page; };
+  // Source-over with a real resulting alpha, so two stacked translucent layers
+  // composite correctly instead of the first one turning opaque.
+  const over = (fg, bg) => {
+    const a = fg.a + bg.a * (1 - fg.a);
+    if (!a) return { r:0, g:0, b:0, a:0 };
+    const ch = (f, b) => (f * fg.a + b * bg.a * (1 - fg.a)) / a;
+    return { r: ch(fg.r, bg.r), g: ch(fg.g, bg.g), b: ch(fg.b, bg.b), a };
+  };
+  const bgOf = (el) => {
+    let n = el; let acc = { r:0, g:0, b:0, a:0 };
+    while (n) {
+      const c = parse(getComputedStyle(n).backgroundColor);
+      if (c && c.a > 0) { acc = over(acc, c); if (acc.a >= 0.999) return acc; }
+      n = n.parentElement || n.getRootNode()?.host;
+    }
+    const body = parse(getComputedStyle(document.body).backgroundColor);
+    const page = body && body.a > 0 ? body : { r:255, g:255, b:255, a:1 };
+    return over(acc, page);
+  };
   const ratio = (a, b) => { const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x); return (l1 + .05) / (l2 + .05); };
-  const sels = ['.status', '.status-tag', '.badge', '.num', '.time', '.sys-line', '.react-chip', '.chip', '.ver-meta', '.map-countline', '.toast', '.sb-group', '.excerpt', '.replies', '.name', '.tb-label', '.kind-chip', '.goto-screen', '.menu-label', '.map-edge-label', '.sb-note', '.nav-pos', '.filter-chip', '.wont-note textarea', '.sort'];
+  const sels = ['.status', '.status-tag', '.badge', '.num', '.time', '.sys-line', '.react-chip', '.chip', '.ver-meta',
+    '.map-countline', '.toast', '.sb-group', '.excerpt', '.replies', '.name', '.tb-label', '.kind-chip', '.goto-screen',
+    '.menu-label', '.map-edge-label', '.sb-note', '.nav-pos', '.filter-chip', '.wont-note textarea', '.sort',
+    '.in-container', '.map-name', '.present-dot', '.ver-label', '.excerpt'];
   const out = [];
+  const seen = new Set();
   for (const sel of sels) for (const el of r.querySelectorAll(sel)) {
     if (!el.getClientRects().length) continue;
-    const cs = getComputedStyle(el); const fg = parse(cs.color); if (!fg) continue;
-    const bg = bgOf(el); const size = parseFloat(cs.fontSize); const bold = parseInt(cs.fontWeight,10) >= 600;
-    const need = size >= 18 || (size >= 14 && bold) ? 3 : 4.5;
-    const c = ratio(blend(fg, bg), bg);
+    const cs = getComputedStyle(el);
+    // SVG text is painted with fill, not color.
+    const fg = parse(el instanceof SVGElement ? cs.fill : cs.color);
+    if (!fg) continue;
+    const bg = bgOf(el);
+    const size = parseFloat(cs.fontSize); const bold = parseInt(cs.fontWeight,10) >= 700;
+    // WCAG large text is 18pt / 14pt bold = 24px / 18.66px bold.
+    const need = size >= 24 || (size >= 18.66 && bold) ? 3 : 4.5;
+    // Every distinct rendering of a selector, not just its first element.
+    const key = sel + '|' + cs.color + '|' + cs.fill + '|' + JSON.stringify(bg) + '|' + size + '|' + cs.fontWeight;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const c = ratio(over(fg, bg), bg);
     out.push({ sel, text: (el.textContent||'').trim().slice(0,24), size, ratio: +c.toFixed(2), need, ok: c >= need });
-    break; // one sample per selector is enough
   }
   return out;
 })()`;
@@ -109,7 +146,7 @@ async function shootAll(theme, device) {
     const name = r.querySelector('.popover .who .name');
     const st = r.querySelector('.popover .status');
     const cs = st && getComputedStyle(st);
-    const clipped = [...r.querySelectorAll('.status-seg button, .popover .who .name, .sb-row .name, .map-name, .chip, .kind-chip')]
+    const clipped = [...r.querySelectorAll('.status-seg button, .popover .who .name, .sb-row .name, .map-name, .chip, .kind-chip, .in-container, .nav-pos, .status')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
     return {
@@ -143,9 +180,13 @@ async function shootAll(theme, device) {
 await shootAll('light', null);
 await shootAll('dark', null);
 await shootAll('light', 'iPhone 13');
+await shootAll('dark', 'iPhone 13');
 await browser.close();
 
 const fails = [];
 for (const r of report) for (const row of r.rows) if (!row.ok) fails.push({ state: r.state, ...row });
 const diags = report.filter((r) => r.diag).map((r) => ({ state: r.state, ...r.diag }));
-console.log(JSON.stringify({ sampled: report.reduce((n, r) => n + r.rows.length, 0), fails, diags }, null, 1));
+const clipped = diags.flatMap((d) => d.clipped.map((c) => `${d.state}: ${c}`));
+console.log(JSON.stringify({ sampled: report.reduce((n, r) => n + r.rows.length, 0), fails, clipped, diags }, null, 1));
+// A measurement that cannot fail is decoration.
+if (fails.length || clipped.length) process.exit(1);

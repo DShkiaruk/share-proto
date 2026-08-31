@@ -28,6 +28,15 @@ const ts = (at) => String(at).padStart(PAD, '0');
 const uuid = () => crypto.randomUUID();
 
 const store = createStateStore(storage, { navCap: NAV_CAP });
+const MAX_SHOTS = 200;
+
+// Screens the designer hid are dropped from a client's copy of the map.
+function visibleShots(role, state) {
+  const shots = state.shots || {};
+  if (role === 'designer') return shots;
+  const hidden = new Set(state.mapmeta?.hidden || []);
+  return Object.fromEntries(Object.entries(shots).filter(([label]) => !hidden.has(label)));
+}
 const publicNav = (nav) => Object.fromEntries(Object.entries(nav).map(([k, v]) => [k, v.anchor]));
 
 export default async function handler(req, res) {
@@ -57,8 +66,12 @@ export default async function handler(req, res) {
       nav: publicNav(state.nav),
       navAt: Object.fromEntries(Object.entries(state.nav).map(([k, v]) => [k, v.at])),
       versions: state.versions || [],
-      shots: state.shots || {},
-      mapmeta: state.mapmeta || { aliases: {}, hidden: [] },
+      // Hiding a screen must actually hide it: a client gets neither its
+      // screenshot nor the fact that something was hidden.
+      shots: visibleShots(role, state),
+      mapmeta: role === 'designer'
+        ? state.mapmeta || { aliases: {}, hidden: [] }
+        : { aliases: state.mapmeta?.aliases || {}, hidden: [] },
       threads: state.threads.filter((t) => canSee(role, t)),
     });
   }
@@ -163,11 +176,18 @@ export default async function handler(req, res) {
     const label = clean(body.label, 120);
     const img = parseImageDataUrl(body.image);
     if (!label || !img) return res.status(400).json({ error: 'Bad shot' });
-    const rel = `shots/${labelKey(label)}/${ts(now)}.${img.ext}`;
+    const { state: shotBase } = await store.loadState(root);
+    const previous = (shotBase.shots || {})[label];
+    if (!previous && Object.keys(shotBase.shots || {}).length >= MAX_SHOTS) {
+      return res.status(400).json({ error: 'Too many screens' });
+    }
+    const rel = `shots/${labelKey(label)}/${ts(now)}-${uuid().slice(0, 8)}.${img.ext}`;
     await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
     await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now });
-    const { state: shotBase } = await store.loadState(root);
     const { path } = await mutateOrDefer(shotBase, (s) => ({ shots: applyShot(s.shots, { label, path: rel }) }));
+    // The shot this one replaces is nobody's now (a preview-sourced one belongs
+    // to its thread, so it is left alone).
+    if (previous && previous.startsWith('shots/')) await storage.delAll([`${root}${previous}`]);
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ path: rel });
   }
@@ -178,8 +198,13 @@ export default async function handler(req, res) {
     if (typeof body.hide === 'string') ev.hide = clean(body.hide, 120);
     if (typeof body.show === 'string') ev.show = clean(body.show, 120);
     if (!ev.alias?.label && !ev.hide && !ev.show) return res.status(400).json({ error: 'Nothing to change' });
-    await storage.appendEvent(`${root}mapmeta/${ts(now)}-${uuid()}.json`, ev);
     const { state: metaBase } = await store.loadState(root);
+    const nextMeta = applyMapMeta(metaBase.mapmeta, ev);
+    // Hiding what is already hidden must not grow the log forever.
+    if (JSON.stringify(nextMeta) === JSON.stringify(applyMapMeta(metaBase.mapmeta, null))) {
+      return res.status(200).json({ mapmeta: nextMeta });
+    }
+    await storage.appendEvent(`${root}mapmeta/${ts(now)}-${uuid()}.json`, ev);
     const { state, path } = await mutateOrDefer(metaBase, (s) => ({ mapmeta: applyMapMeta(s.mapmeta, ev) }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ mapmeta: state.mapmeta });
@@ -217,14 +242,19 @@ export default async function handler(req, res) {
     const rel = `previews/${tid}/${ts(now)}.${img.ext}`;
     await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
     await storage.appendEvent(eventPath(tid), { type: 'state', at: now, preview: rel });
-    // A screen with no map shot yet borrows this preview.
+    // A screen with no map shot yet borrows this picture — as its own copy under
+    // shots/, because a previews/ path is gated on the thread's visibility and
+    // would 404 for the client (and vanish when the thread is deleted).
     const label = existing.screenLabel;
+    let shotRel = null;
     if (label && !(cur.shots || {})[label]) {
-      await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now, from: 'preview' });
+      shotRel = `shots/${labelKey(label)}/${ts(now)}-${uuid().slice(0, 8)}.${img.ext}`;
+      await storage.putFile(`${root}${shotRel}`, img.buf, img.contentType);
+      await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: shotRel, at: now, from: 'preview' });
     }
     const { path } = await mutateOrDefer(cur, (s) => ({
       threads: applyPreview(s.threads, tid, rel),
-      shots: label && !(s.shots || {})[label] ? applyShot(s.shots, { label, path: rel }) : s.shots,
+      shots: shotRel ? applyShot(s.shots, { label, path: shotRel, from: 'preview' }) : s.shots,
     }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ preview: rel });

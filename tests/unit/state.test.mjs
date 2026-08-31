@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta } from '../../template/lib/state.js';
+import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta, applyVersionEvent } from '../../template/lib/state.js';
 import { isWriteConflict } from '../../template/lib/storage.js';
 import { applyCreate } from '../../template/lib/threads.js';
 import { normalizeEtag } from '../../template/lib/storage.js';
@@ -183,4 +183,28 @@ test('isWriteConflict recognises both ways Blob reports a lost race', () => {
   assert.equal(isWriteConflict(new Error('Vercel Blob: This blob already exists'), { ifAbsent: true }), true);
   assert.equal(isWriteConflict(new Error('Vercel Blob: Access denied')), false);
   assert.equal(isWriteConflict(null), false);
+});
+
+test('applyVersionEvent registers, labels, back-dates and keeps versions in order', () => {
+  let v = applyVersionEvent([], { id: 'b', at: 200 });
+  v = applyVersionEvent(v, { id: 'a', at: 300 });
+  assert.deepEqual(v.map((x) => x.id), ['b', 'a']);
+  // A comment from an older build proves the version existed earlier than we saw it.
+  v = applyVersionEvent(v, { id: 'a', at: 100 });
+  assert.deepEqual(v.map((x) => x.id), ['a', 'b']);
+  assert.equal(v.find((x) => x.id === 'a').firstSeen, 100);
+  v = applyVersionEvent(v, { id: 'a', label: 'Sprint 12', at: 400 });
+  assert.equal(v.find((x) => x.id === 'a').label, 'Sprint 12');
+  assert.equal(v.find((x) => x.id === 'a').firstSeen, 100); // labelling does not re-date it
+  assert.equal(applyVersionEvent(v, null).length, 2);
+  assert.equal(applyVersionEvent(v, { at: 1 }).length, 2); // no id → ignored
+});
+
+test('a shot borrowed from a comment preview never replaces a real one', () => {
+  const crawler = applyShot({}, { label: 'Home', path: 'shots/a/1.jpg' });
+  const after = applyShot(crawler, { label: 'Home', path: 'shots/a/2.jpg', from: 'preview' });
+  assert.deepEqual(after, crawler, 'a preview must not overwrite a crawler shot on rebuild');
+  const filled = applyShot({}, { label: 'Home', path: 'shots/a/3.jpg', from: 'preview' });
+  assert.equal(filled.Home, 'shots/a/3.jpg'); // but it may fill an empty slot
+  assert.equal(applyShot(filled, { label: 'Home', path: 'shots/a/4.jpg' }).Home, 'shots/a/4.jpg');
 });
