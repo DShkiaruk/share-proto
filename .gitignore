@@ -6,4 +6,5 @@ worker/wrangler.log
 test-results/
 playwright-report/
 tests/fixtures/site/
+tests/fixtures/site-*/
 docs/superpowers/visual/*.png
