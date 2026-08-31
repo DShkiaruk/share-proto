@@ -1571,12 +1571,6 @@
     who.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
     const rb = roleBadge(t);
     if (rb) who.appendChild(el('span', 'badge', rb));
-    // Made from the map: it is about the screen, so there is no pin to hunt for.
-    if (!t.anchor) who.appendChild(el('span', 'badge', 'About this screen'));
-    if (t.proto && state.proto && t.proto !== state.proto) {
-      const v = state.versions.find((x) => x.id === t.proto);
-      who.appendChild(el('span', 'badge old-version', v?.label ? `Older version · ${v.label}` : 'Older version'));
-    }
     head.appendChild(who);
 
     const linkBtn = el('button', 'icon-btn');
@@ -1603,6 +1597,13 @@
       toggleStatusMenu(t, statusBtn);
     });
     meta.appendChild(statusBtn);
+    // The state row, not the identity row: two long badges beside the name left
+    // it as "D..".
+    if (!t.anchor) meta.appendChild(el('span', 'badge', 'About this screen'));
+    if (t.proto && state.proto && t.proto !== state.proto) {
+      const v = state.versions.find((x) => x.id === t.proto);
+      meta.appendChild(el('span', 'badge old-version', v?.label ? `Older version · ${v.label}` : 'Older version'));
+    }
     if (t.anchor?.container?.name) meta.appendChild(el('span', 'in-container', `in: ${t.anchor.container.name}`));
     const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
     const at = ordered.findIndex((x) => x.id === t.id);
@@ -2170,8 +2171,11 @@
     cancelJump();
     const loc = locateAnchor(t.anchor);
     // The ghost's trigger counts as the spot; the stored document fraction does
-    // not — it is what used to strand pins over unrelated content.
-    const pos = loc.pos || triggerOf(t)?.pos || null;
+    // not — it is what used to strand pins over unrelated content. Keep the
+    // element too: a trigger inside a list that scrolls on its own is often out
+    // of sight, and scrolling the window would never reach it.
+    const via = loc.el ? loc : triggerOf(t);
+    const pos = via?.pos || null;
     const openAtPin = () => {
       positionPins();
       const p = pinEls.get(t.id);
@@ -2196,8 +2200,10 @@
       return;
     }
     const off = pos.x < 0 || pos.y < 0 || pos.x > innerWidth || pos.y > innerHeight;
-    if (off && loc.el) {
-      loc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (off && via?.el) {
+      // scrollIntoView walks every scrollable ancestor, so this reaches a row
+      // inside a list that scrolls independently of the page.
+      via.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       setTimeout(openAtPin, 450);
     } else if (off) {
       const de = document.documentElement;

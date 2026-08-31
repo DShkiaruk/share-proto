@@ -44,6 +44,20 @@ const click = async (page, loc) => {
   await api(d, { action: 'status', threadId: c.thread.id, status: 'done' });
   const proto = await d.evaluate(() => window.__fp.state.proto);
   await api(d, { action: 'version-label', id: proto, label: 'Sprint 12' });
+  // A thread from an earlier build, by someone with a long name: the header
+  // carries a role badge AND a version badge, which is what squeezed the name
+  // to "D..". The clipping check below is what guards it.
+  const old = await api(d, {
+    action: 'create',
+    text: 'Left on the previous build — the label above the field.',
+    screen: 'Home',
+    screenLabel: 'Home',
+    anchor: anchorH1,
+    page: '/',
+    proto: 'build-from-last-week',
+  });
+  await api(d, { action: 'version', id: 'build-from-last-week' });
+  await api(d, { action: 'version-label', id: 'build-from-last-week', label: 'Sprint 11' });
   await d.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = 'hidden'));
   const shot = await d.screenshot({ type: 'jpeg', quality: 70 });
   await d.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = ''));
@@ -159,6 +173,23 @@ async function shootAll(theme, device) {
       clipped,
     };
   }) });
+  // The header of a thread from an earlier build carries a role badge and a
+  // version badge at once — the combination that squeezed the author's name.
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(400);
+  await click(page, sr(page, '.sb-row').filter({ hasText: 'previous build' }).first()); await page.waitForTimeout(600);
+  await shot('03b-popover-older-build');
+  report.push({ state: `diag-older-${tag}`, rows: [], diag: await page.evaluate(() => {
+    const r = document.querySelector('[data-fp-host]').shadowRoot;
+    const clipped = [...r.querySelectorAll('.popover .who .name, .popover .badge, .popover .head-meta .badge')]
+      .filter((el) => el.scrollWidth > el.clientWidth + 1)
+      .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
+    return { clipped };
+  }) });
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(400);
+  await click(page, sr(page, '.sb-row').first()); await page.waitForTimeout(600);
+
   await click(page, sr(page, '.popover .status')); await page.waitForTimeout(300);
   await shot('04-status-menu');
   report.push({ state: `popover-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
