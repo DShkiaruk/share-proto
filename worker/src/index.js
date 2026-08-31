@@ -224,7 +224,10 @@ export default {
 
       if (req.method === 'GET') {
         const data = await stub.getAll(role);
-        return json(200, { role, name: author, ...data }, cors);
+        // v1: this edition speaks create/reply/edit/resolve/delete/edge only.
+        // The overlay reads this and stops offering statuses, media and the map
+        // instead of firing actions that would 400 here.
+        return json(200, { v: 1, role, name: author, ...data }, cors);
       }
       if (req.method !== 'POST') return json(405, { error: 'Method not allowed' }, cors);
       const body = await req.json().catch(() => ({}));

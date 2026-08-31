@@ -62,6 +62,6 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - Read state is per browser; there are no notifications outside the page (deliberate).
 - Comments and images live in a private Blob store; the API is the only reader.
 - Comments inside UI that closes on *focus* leaving it (some component libraries) or inside a native `<dialog>` opened with `showModal()` may not be placeable — the composer needs focus, and a modal dialog makes the rest of the page inert.
-- The Cloudflare Worker edition (`worker/`) still speaks the v1 API: no comment numbers, trails or previews until it is ported.
+- The Cloudflare Worker edition (`worker/`) still speaks the v1 API. It says so to the overlay (`v: 1`), which then hides statuses, pictures and the map rather than firing actions it would reject — but comments, replies, resolve and "Go to comment" work there.
 
 MIT

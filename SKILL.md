@@ -15,7 +15,7 @@ The `template/` next to this file already contains the whole system — auth mid
 |---|---|---|
 | **Vercel** (default) | permanent link, no infra of your own | Steps 1–7 below |
 | **Local** | nothing may leave the machine / no Vercel account | "Local mode — no Vercel" |
-| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel; `worker/` still speaks the v1 API — no numbers/trails/previews) |
+| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel; `worker/` still speaks the v1 API and announces itself as such: the overlay then hides statuses, pictures and the map there) |
 
 If the user didn't say, default to Vercel and mention the other two in one line.
 

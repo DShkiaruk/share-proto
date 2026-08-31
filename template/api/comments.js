@@ -61,6 +61,7 @@ export default async function handler(req, res) {
     const { state, path } = wantRebuild ? await store.forceRebuild(root) : await store.loadState(root);
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({
+      v: 2, // the overlay refuses to offer v2-only actions to an older server
       role,
       name: author,
       nav: publicNav(state.nav),

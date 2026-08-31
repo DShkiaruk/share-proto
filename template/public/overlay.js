@@ -106,6 +106,7 @@
     sort: localStorage.getItem('fp_sort') || 'newest',
     filter: 'active', // active = open + in progress (what needs attention)
     roleFilter: 'all', // designer-only: all | client | team
+    serverV: 2, // set from the API; an older comments server has no statuses, media or map
     versions: [],
     navAt: {},
     versionFilter: null,
@@ -725,6 +726,7 @@
   // to the thread. Runs after the post succeeded; any failure is silent — a
   // comment without a picture is still a comment.
   async function capturePreview(thread, point, at) {
+    if (state.serverV < 2) return; // no media endpoint on this server
     try {
       // The reviewer may have moved on since the post — a picture of another
       // screen would be worse than none.
@@ -811,6 +813,7 @@
 
   let inflight = null;
   let lastSig = '';
+  let legacyNoticeShown = false;
   function refresh() {
     if (!inflight) {
       inflight = (async () => {
@@ -818,6 +821,7 @@
           const data = await api('GET');
           state.role = data.role;
           state.name = data.name || '';
+          state.serverV = Number(data.v) || 1;
           state.nav = data.nav || {};
           state.navAt = data.navAt || {};
           state.versions = data.versions || [];
@@ -834,6 +838,10 @@
             state.versions.map((v) => [v.id, v.label]),
             Object.entries(state.shots), state.mapmeta, Object.keys(state.nav).sort(),
           ]);
+          if (state.serverV < 2 && !legacyNoticeShown) {
+            legacyNoticeShown = true;
+            toast('This comments server is older than the overlay — statuses, pictures and the map are off here', 8000);
+          }
           if (sig !== lastSig) {
             lastSig = sig;
             renderAll();
@@ -1358,6 +1366,7 @@
     }
   }
   function toggleStatusMenu(t, anchorBtn) {
+    if (state.serverV < 2) return; // this server only knows resolve/reopen
     if (statusMenu) return closeStatusMenu();
     statusAnchor = anchorBtn;
     statusMenu = el('div', 'status-menu');
@@ -1440,6 +1449,7 @@
   }
   function reactionsRow(t, m) {
     const row = el('div', 'reacts');
+    if (state.serverV < 2) return row; // reactions need a v2 server
     const me = myLabel();
     for (const [emoji, who] of Object.entries(m.reactions || {})) {
       const mine = who.includes(me);
@@ -2495,6 +2505,7 @@
     state.map = false;
   }
   function openMap() {
+    if (state.serverV < 2) return toast('The map needs a newer comments server', 5000);
     if (state.presenting) togglePresent();
     closePopover();
     setSidebar(false);

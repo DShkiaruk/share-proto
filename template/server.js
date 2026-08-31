@@ -250,6 +250,7 @@ async function apiComments(req, res, session) {
     const navAt = {};
     for (const [k, v] of Object.entries(S.nav)) navAt[k] = v.at;
     return json(res, 200, {
+      v: 2,
       role,
       name: author,
       nav,
