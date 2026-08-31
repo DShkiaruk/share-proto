@@ -2578,12 +2578,26 @@
     const svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('class', 'map-edges');
     svg.setAttribute('width', String(W + 40));
-    svg.setAttribute('height', String(H + 40));
+    svg.setAttribute('height', String(H + 100)); // room for the labels under back-edges
     const defs = document.createElementNS(svgNS, 'defs');
     defs.innerHTML =
       '<marker id="fp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>';
     svg.appendChild(defs);
     const byLabel = new Map(model.nodes.map((n) => [n.label, n]));
+    // Two edges that loop back under the same nodes get the same midpoint, and
+    // their labels used to print on top of each other — unreadable, and it
+    // looked like one corrupted word. Keep what has been placed and step down.
+    const placed = [];
+    const shift = (x, y, w) => {
+      let out = y;
+      for (let i = 0; i < 8; i++) {
+        const hit = placed.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 && Math.abs(p.y - out) < 14);
+        if (!hit) break;
+        out += 15;
+      }
+      placed.push({ x, y: out, w });
+      return out;
+    };
     for (const e of model.edges) {
       const a = byLabel.get(e.from);
       const b = byLabel.get(e.to);
@@ -2604,10 +2618,13 @@
       if (e.txt) {
         const text = document.createElementNS(svgNS, 'text');
         text.setAttribute('class', 'map-edge-label');
-        text.setAttribute('x', String(back ? (x1 + x2) / 2 : x1 + (x2 - x1) / 2));
-        text.setAttribute('y', String(back ? Math.max(a.y, b.y) + NODE_H + 52 : (y1 + y2) / 2 - 6));
+        const label = e.txt.length > 24 ? `${e.txt.slice(0, 23)}…` : e.txt;
+        const lx = back ? (x1 + x2) / 2 : x1 + (x2 - x1) / 2;
+        const ly = back ? Math.max(a.y, b.y) + NODE_H + 52 : (y1 + y2) / 2 - 6;
+        text.setAttribute('x', String(lx));
+        text.setAttribute('y', String(shift(lx, ly, label.length * 6.2)));
         text.setAttribute('text-anchor', 'middle');
-        text.textContent = e.txt.length > 24 ? `${e.txt.slice(0, 23)}…` : e.txt;
+        text.textContent = label;
         svg.appendChild(text);
       }
     }
