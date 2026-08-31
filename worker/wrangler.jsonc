@@ -3,6 +3,10 @@
   "name": "eleken-review-comments",
   "main": "src/index.js",
   "compatibility_date": "2025-06-01",
+  // Only for a native base64 decode of attachment payloads (lib/media.js picks
+  // Buffer when it exists): the hand-rolled fallback can spend more than the
+  // free plan's 10 ms of CPU on a full-size image.
+  "compatibility_flags": ["nodejs_compat"],
   // Static overlay assets come straight from the template — no copies to drift.
   // /api/* and the overlay files go through the worker (CORS headers); the
   // rest (login.html, favicon, stub index) is served as plain assets.
@@ -18,4 +22,6 @@
   "observability": { "enabled": true }
   // Secrets (wrangler secret put / .dev.vars locally):
   //   DESIGNER_PASSWORD, CLIENT_PASSWORD, SESSION_SECRET, ALLOWED_ORIGINS
+  // Optional var: ROOM_MEDIA_BUDGET_MB (default 64) — how much picture data one
+  // room may hold before uploads are refused with 507.
 }

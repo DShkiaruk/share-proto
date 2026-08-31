@@ -1,10 +1,12 @@
 {
-  "name": "worker",
+  "name": "share-proto-worker",
   "version": "1.0.0",
-  "description": "",
+  "description": "Cloudflare Worker edition of the share-proto comments server (embed-mode host).",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "smoke": "bash ../scripts/worker-smoke.sh"
   },
   "keywords": [],
   "author": "",

@@ -10,7 +10,7 @@ Three ways to run it — same overlay, same API contract:
 |---|---|---|
 | **Vercel** (default) | you want a permanent link | Vercel functions + private Blob store |
 | **Local** | nothing may leave your machine, or no Vercel account | `template/server.js` (zero dependencies) + optional `cloudflared` tunnel |
-| **Embed** | commenting on someone else's deployment (PR previews) | one `<script>` tag pointing at a hosted comments server (Vercel or the Cloudflare Worker in `worker/`) |
+| **Embed** | commenting on someone else's deployment (PR previews) | one `<script>` tag pointing at a hosted comments server (Vercel, or the Cloudflare Worker in `worker/` — both speak the same v2 API) |
 
 ## How to use
 
@@ -43,10 +43,12 @@ scripts/smoke.sh      — post-deploy checks (gate, roles, isolation, file proxy
 scripts/crawl.mjs     — walks the prototype with real clicks and shoots every screen for the map
 template/             — the complete system: auth middleware, comments API, overlay UI
 template/server.js    — local mode server (no Vercel)
-worker/               — Cloudflare Worker edition of the comments server (embed mode host)
+worker/               — Cloudflare Worker edition of the comments server (embed mode host);
+                        one Durable Object per room, the rules in worker/src/room.js
 tests/                — unit tests (node --test) and Playwright e2e: five local projects
                         (place · media · workflow · map · embed) against the fixture,
-                        plus a smoke project against a real deployment
+                        plus a smoke project against a real deployment. The embed spec
+                        runs a second time against the Worker (npm run e2e:worker)
 ```
 
 The template is self-contained: append-only comment events in a private Blob store with a single derived state document, element-anchored pins, a shared navigation graph that powers "Go to comment", automatic dark-theme matching. Don't rewrite its internals — they encode lessons that aren't reproducible from the code alone (see "Hard rules" in SKILL.md).
@@ -62,6 +64,6 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - Read state is per browser; there are no notifications outside the page (deliberate).
 - Comments and images live in a private Blob store; the API is the only reader.
 - Comments inside UI that closes on *focus* leaving it (some component libraries) or inside a native `<dialog>` opened with `showModal()` may not be placeable — the composer needs focus, and a modal dialog makes the rest of the page inert.
-- The Cloudflare Worker edition (`worker/`) still speaks the v1 API. It says so to the overlay (`v: 1`), which then hides statuses, pictures and the map rather than firing actions it would reject — but comments, replies, resolve and "Go to comment" work there.
+- The Cloudflare Worker edition stores pictures inside its Durable Object, capped per room (`ROOM_MEDIA_BUDGET_MB`, 64 MB by default); a full room refuses new pictures rather than dropping old ones. Every server announces its API version, and the overlay hides whatever an older one cannot do.
 
 MIT

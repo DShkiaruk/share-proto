@@ -5,7 +5,7 @@
 One repo for all modes (Vercel · local · embed), a storage layer that survives free-tier quotas, and a comment model that understands the prototype's structure and state.
 
 ### Foundation
-- `share-proto-local` merged in: local mode (`template/server.js`, zero dependencies), embed mode (rooms per PR preview, CORS), Cloudflare Worker edition (`worker/`, **v1-frozen**).
+- `share-proto-local` merged in: local mode (`template/server.js`, zero dependencies), embed mode (rooms per PR preview, CORS), Cloudflare Worker edition (`worker/`).
 - **Private Blob store**; append-only events + one `state.json` document read with `useCache:false` and written with ETag preconditions. A poll is one simple operation — no more `list()` per poll (which could exhaust the Hobby quota and disable Blob for 30 days).
 - `/api/file` — session-gated proxy for previews, attachments and screen shots.
 - Passwords `hex 4` minimum; login rate limit; `scripts/smoke.sh`; `scripts/seed.mjs` (also the v1 → v2 migration path, see `docs/UPGRADE.md`).
@@ -36,6 +36,15 @@ One repo for all modes (Vercel · local · embed), a storage layer that survives
 - v2 reads only **private** stores — existing v1 deployments migrate with `docs/UPGRADE.md` (export → seed → deploy → `?rebuild=1`).
 - The v1 `resolve` action is still accepted (mapped to a status event).
 - `H` semantics changed (hides pins too). New hotkeys: `M`, `J`/`K`.
+
+### Worker edition (Cloudflare)
+- Ported to the v2 API: statuses, kinds, reactions, numbers, previews, attachments, screen shots, the map and `/api/file` all work there. Rules live in `worker/src/room.js` over one Durable Object per room; `worker/src/index.js` is transport only.
+- One set of rules for three servers: the worker imports `template/lib/{threads,state,media,session,cors}.js` instead of copying them (`worker/src/session.js`, a duplicate, is gone).
+- Pictures are stored in the Durable Object, capped per room by `ROOM_MEDIA_BUDGET_MB` (64 MB default); a full room answers 507.
+- v1 rooms upgrade themselves on first read (nav sharded per edge, threads gain numbers and statuses) — see `docs/UPGRADE.md`.
+- Verified by `tests/unit/room.test.mjs` (rules), `scripts/worker-smoke.sh` (24 wire checks against `wrangler dev`) and `npm run e2e:worker` (the embed spec, real overlay, same file as the local run).
+- Login brake: ten wrong passwords from one address and that address is refused for ten minutes. Held in one Durable Object, so unlike the per-instance counter the other editions keep, it is shared by every request the worker sees.
+- Every server announces its API version (`v`) and the overlay hides what an older one cannot do.
 
 ## v1 — 2026-07-03
 

@@ -13,9 +13,18 @@ export const emptyState = () => ({
   v: 2, threads: [], nav: {}, versions: [], shots: {}, mapmeta: { aliases: {}, hidden: [] }, maxN: 0, updatedAt: 0,
 });
 
-// Screen shots for the map are filed under a URL-safe key of the label.
+// Screen shots for the map are filed under a URL-safe key of the label. The
+// Worker edition has no Buffer unless nodejs_compat is on, so fall back to
+// btoa over the UTF-8 bytes — same output either way.
+const toBase64 = (str) => {
+  if (typeof Buffer !== 'undefined') return Buffer.from(str, 'utf8').toString('base64');
+  let bin = '';
+  for (const b of new TextEncoder().encode(str)) bin += String.fromCharCode(b);
+  return btoa(bin);
+};
+
 export const labelKey = (label) =>
-  Buffer.from(String(label), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 80) || '_';
+  toBase64(String(label)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 80) || '_';
 
 // shotlog/<ts>-<uuid>.json {label, path, at, from?}: the latest path per label
 // wins — except a shot borrowed from a comment preview (`from: 'preview'`),

@@ -3,7 +3,7 @@
 // way (this caught public/screenshot.js — previews would never have loaded).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('../../', import.meta.url).pathname;
@@ -51,4 +51,18 @@ test('every script SKILL.md tells the agent to run exists', () => {
     if (!skill.includes(s)) continue;
     assert.doesNotThrow(() => statSync(join(root, s)), `${s} is referenced by SKILL.md but missing`);
   }
+});
+
+// The three servers must keep agreeing about who may see what. A copy of the
+// rules inside worker/ would drift silently and surface as a role leak.
+test('the Worker imports the shared rules instead of copying them', () => {
+  const room = read('worker/src/room.js');
+  const index = read('worker/src/index.js');
+  for (const mod of ['threads.js', 'state.js', 'media.js']) {
+    assert.ok(room.includes(`../../template/lib/${mod}`), `worker/src/room.js no longer imports ${mod}`);
+  }
+  for (const mod of ['session.js', 'cors.js']) {
+    assert.ok(index.includes(`../../template/lib/${mod}`), `worker/src/index.js no longer imports ${mod}`);
+  }
+  assert.equal(existsSync(join(root, 'worker/src/session.js')), false, 'the duplicated session module is back');
 });

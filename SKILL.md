@@ -15,7 +15,7 @@ The `template/` next to this file already contains the whole system — auth mid
 |---|---|---|
 | **Vercel** (default) | permanent link, no infra of your own | Steps 1–7 below |
 | **Local** | nothing may leave the machine / no Vercel account | "Local mode — no Vercel" |
-| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel; `worker/` still speaks the v1 API and announces itself as such: the overlay then hides statuses, pictures and the map there) |
+| **Embed** | commenting on someone else's deployment (PR previews) | "Embed mode" (needs a hosted comments server: this template on Vercel, or `worker/` on Cloudflare — both speak v2, and every server announces its version so the overlay never offers what a server cannot do) |
 
 If the user didn't say, default to Vercel and mention the other two in one line.
 
@@ -73,11 +73,40 @@ or Local mode) — the assembled `public/index.html` is irrelevant to embedded
 pages; only `/overlay.js`, `/overlay.css` and `/api/*` matter. Set
 `ALLOWED_ORIGINS` as an env var in both cases.
 
+### Cloudflare Worker as the comments host
+
+Prefer this over Vercel when the host must outlive a free Blob quota, or when
+the client's CI already lives on Cloudflare. One Durable Object per room; the
+same v2 API; pictures are stored in the object itself.
+
+```bash
+cd worker && npm install
+npx wrangler secret put DESIGNER_PASSWORD     # then CLIENT_PASSWORD,
+npx wrangler secret put SESSION_SECRET        # then ALLOWED_ORIGINS
+npx wrangler deploy
+```
+
+Verify before handing the URL over: `scripts/worker-smoke.sh` runs the whole
+contract against a local `wrangler dev` (24 checks), and `npm run e2e:worker`
+runs the embed spec — the real overlay on a foreign page — against it. On the
+deployed host, open `/demo`: a fake screen with the overlay attached, so the
+client can try commenting before any PR carries the tag.
+
+Ten wrong passwords from one address lock it out for ten minutes (the counter
+lives in a Durable Object, so it holds across the whole worker — the other two
+editions can only count per instance).
+
+`ROOM_MEDIA_BUDGET_MB` (default 64) caps what one room may store in pictures;
+past it, uploads are refused with 507 rather than old ones being dropped. A
+room written by the v1 worker upgrades itself on first load — comments,
+numbers and the learned navigation are kept.
+
 ## Hard rules
 
 - **Never rewrite the storage model in `api/comments.js` / `lib/storage.js`.** Events are append-only and are the source of truth; `state.json` is a derived document written with ETag preconditions and read with `useCache:false`. Overwriting event blobs or reading the document through the CDN cache brings back silently-reverting replies (v1 lesson) and quota-burning `list()` polls (v2 lesson).
 - **Never remove the overlay's anchor model** (path + tag + text-hint). Screen-hash approaches break on responsive prototypes that render different DOM per breakpoint.
 - The client role must never receive designer threads from the API. If you touch the API, re-verify this before finishing.
+- **Never fork the thread rules into the Worker.** `worker/src/room.js` imports `template/lib/{threads,state,media}.js` and `worker/src/index.js` imports `template/lib/{session,cors}.js`; a copy there would drift silently and only show up as a role-leak or a lost comment. Three servers, one set of rules.
 
 ## Steps
 

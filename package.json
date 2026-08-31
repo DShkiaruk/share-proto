@@ -6,7 +6,9 @@
     "test": "node --test tests/unit/*.test.mjs",
     "e2e": "playwright test -c tests/e2e/playwright.config.mjs",
     "smoke": "bash scripts/smoke.sh",
-    "crawl": "node scripts/crawl.mjs"
+    "crawl": "node scripts/crawl.mjs",
+    "e2e:worker": "playwright test -c tests/e2e/playwright.worker.config.mjs",
+    "smoke:worker": "bash scripts/worker-smoke.sh"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

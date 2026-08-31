@@ -53,7 +53,27 @@ Optional — fill the map: `node <skill-dir>/scripts/crawl.mjs $D --password "<t
 
 Older comments keep working; they show as an "Older version" of the prototype (their build predates version tracking) and have no preview.
 
+## Upgrading a Cloudflare Worker host
+
+The Worker edition speaks v2 as of this version. Upgrading a deployed one:
+
+```bash
+cd worker && npm install
+npx wrangler deploy
+```
+
+No data migration step and no downtime beyond the deploy: each room converts
+itself the first time it is read — the single `nav` key becomes one key per
+edge, and existing threads gain a number, a status and the v2 fields. Comments,
+replies and the learned navigation are kept. Nothing rolls back cleanly
+afterwards, though: a v1 worker redeployed over an upgraded room would not find
+its `nav` key and would show no learned navigation (the comments survive).
+
+New knob: `ROOM_MEDIA_BUDGET_MB` (default 64) — how much picture data one room
+may hold before uploads are refused with 507. Verify with
+`scripts/worker-smoke.sh` and `npm run e2e:worker` before pointing reviewers at
+it.
+
 ## Not covered
 
-- The Cloudflare Worker edition (`worker/`) still speaks the v1 API — do not point a v2 overlay at it until it is ported.
 - Local mode (`server.js`) needs no migration: delete nothing; new fields appear as they are used.

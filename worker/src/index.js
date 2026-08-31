@@ -1,44 +1,29 @@
 /* Hosted comments server on Cloudflare Workers — the embed-mode backend.
 
-   Same API contract as template/server.js / template/api/*, minus the
+   Same v2 API as template/api/* and template/server.js, minus the
    prototype-serving parts (an embedded overlay lives on someone else's page;
    this host only serves /overlay.js, /overlay.css and /api/*).
 
-   One Durable Object per comment room (= one per PR preview): a DO is
-   single-threaded, which gives the exact same race-free semantics as the
-   single-process local server. Threads are stored one-per-key (`t:<id>`), so
-   no value ever grows past DO storage limits. */
+   One Durable Object per comment room (= one per PR preview). The rules live
+   in src/room.js over the DO's storage; this file is transport only: CORS,
+   login, the session check, and forwarding to the right room. Author identity
+   is decided here from the signed session and handed to the room — the room
+   never reads it off the request body. */
 
 import { DurableObject } from 'cloudflare:workers';
-import { createToken, sessionFromHeaders } from './session.js';
+import { createToken, sessionFromHeaders } from '../../template/lib/session.js';
+import { originAllowed, ROOM_RE } from '../../template/lib/cors.js';
+import { clean } from '../../template/lib/threads.js';
+import { Room } from './room.js';
 
-const MAX_TEXT = 3000;
 const MAX_NAME = 40;
-const NAV_CAP = 500;
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
-const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-const clean = (str, max) => String(str || '').trim().slice(0, max);
-const canSee = (role, thread) => role === 'designer' || thread.authorRole === 'client';
-
-/* ---------- CORS (same semantics as template/lib/cors.js) ---------- */
-
-function originAllowed(origin, allowedEnv) {
-  if (!origin) return false;
-  for (const raw of String(allowedEnv || '').split(',')) {
-    const pat = raw.trim().toLowerCase().replace(/\/+$/, '');
-    if (!pat) continue;
-    const o = origin.toLowerCase();
-    if (pat === o) return true;
-    if (pat.includes('*')) {
-      const re = new RegExp(
-        '^' + pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+') + '$'
-      );
-      if (re.test(o)) return true;
-    }
-  }
-  return false;
-}
+const MAX_BODY = 4.5 * 1024 * 1024; // three 1.5 MB images as base64
+const FAIL_WINDOW_MS = 10 * 60 * 1000;
+const MAX_FAILS = 10;
+// The login brake lives in one reserved object. `_auth` is a name the room
+// regex can never produce, so it cannot collide with a PR's room.
+const AUTH_ROOM = '_auth';
 
 function corsHeaders(req, env) {
   const origin = req.headers.get('Origin');
@@ -63,109 +48,96 @@ const json = (status, payload, extra = {}) =>
 export class CommentsRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.loaded = false;
+    const mb = Number(env.ROOM_MEDIA_BUDGET_MB) || 64;
+    this.room = new Room(ctx.storage, { mediaBudget: Math.max(1, mb) * 1024 * 1024 });
+    this.chain = Promise.resolve();
   }
 
-  async load() {
-    if (this.loaded) return;
-    const all = await this.ctx.storage.list();
-    this.threads = [];
-    this.nav = {};
-    for (const [key, value] of all) {
-      if (key.startsWith('t:')) this.threads.push(value);
-      else if (key === 'nav') this.nav = value;
-    }
-    this.threads.sort((a, b) => a.createdAt - b.createdAt);
-    this.loaded = true;
+  // A DO's input gate closes around storage I/O; reading a request body is
+  // network I/O, so two POSTs can in principle interleave between parsing and
+  // writing — and two creates that both read the thread list before either
+  // writes would hand out the same comment number. Local runs did not produce
+  // that interleaving, so this queue is insurance, not a fix for an observed
+  // bug: it costs one promise per request and gives the room exactly the
+  // single-threaded model the local server has.
+  run(fn) {
+    const next = this.chain.then(fn, fn);
+    this.chain = next.then(
+      () => {},
+      () => {}
+    );
+    return next;
   }
 
-  async getAll(role) {
-    await this.load();
-    const nav = {};
-    for (const [k, v] of Object.entries(this.nav)) nav[k] = v.anchor;
-    return { nav, threads: this.threads.filter((t) => canSee(role, t)) };
+  async handle(request) {
+    const url = new URL(request.url);
+    const role = request.headers.get('X-Fp-Role') === 'designer' ? 'designer' : 'client';
+    const author = decodeURIComponent(request.headers.get('X-Fp-Author') || '');
+
+    if (url.pathname === '/api/file') {
+      const res = await this.run(() => this.room.file(role, url.searchParams.get('p') || ''));
+      if (res.status !== 200) return json(res.status, res.payload);
+      return new Response(res.bytes, {
+        headers: {
+          'Content-Type': res.contentType || 'application/octet-stream',
+          'Cache-Control': 'private, max-age=31536000, immutable',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+
+    if (request.method === 'GET') return json(200, await this.run(() => this.room.get(role, author)));
+    let body;
+    try {
+      body = JSON.parse((await request.text()) || '{}');
+    } catch {
+      body = {};
+    }
+    const { status, payload } = await this.run(() => this.room.post(role, author, body));
+    return json(status, payload);
   }
 
-  // Returns {status, payload}. Mirrors apiComments() in template/server.js —
-  // author identity comes from the signed session, never from the body.
-  async mutate(role, author, body) {
-    await this.load();
-    const action = body.action;
-    const now = Date.now();
+  // The overlay reads `error` off a JSON body; an unhandled throw would reach
+  // it as workerd's HTML error page and show up as an unexplained failure.
+  /* Brute-force brake for /api/login, kept in the reserved `_auth` object.
+     The other two editions count failures in the instance's own memory, which
+     is a speed bump — a Durable Object is one place for every request that
+     reaches this worker, so here it is an actual limit. Per IP: a locked-out
+     attacker never locks out the reviewer next to them. */
+  async loginBlocked(ip) {
+    const e = await this.ctx.storage.get(`fail:${ip}`);
+    return Boolean(e && Date.now() - e.since <= FAIL_WINDOW_MS && e.n >= MAX_FAILS);
+  }
 
-    if (action === 'edge') {
-      const from = clean(body.from, 64);
-      const to = clean(body.to, 64);
-      const anchor = body.anchor && typeof body.anchor === 'object' ? body.anchor : null;
-      if (!from || !to || from === to || !anchor || JSON.stringify(anchor).length > 3000) {
-        return { status: 400, payload: { error: 'Bad edge' } };
+  async noteLogin(ip, ok) {
+    return this.run(async () => {
+      const key = `fail:${ip}`;
+      if (ok) return this.ctx.storage.delete(key);
+      const now = Date.now();
+      const e = (await this.ctx.storage.get(key)) || { n: 0, since: now };
+      if (now - e.since > FAIL_WINDOW_MS) {
+        e.n = 0;
+        e.since = now;
       }
-      this.nav[`${from}>${to}`] = { anchor, at: now };
-      const keys = Object.keys(this.nav);
-      if (keys.length > NAV_CAP) {
-        keys.sort((a, b) => this.nav[a].at - this.nav[b].at);
-        while (keys.length > NAV_CAP) delete this.nav[keys.shift()];
+      e.n++;
+      await this.ctx.storage.put(key, e);
+      // Expired counters would otherwise stay for the life of the deployment.
+      const rows = await this.ctx.storage.list({ prefix: 'fail:' });
+      if (rows.size > 200) {
+        for (const [k, v] of rows) {
+          if (now - v.since > FAIL_WINDOW_MS) await this.ctx.storage.delete(k);
+        }
       }
-      await this.ctx.storage.put('nav', this.nav);
-      return { status: 200, payload: { ok: true } };
-    }
+    });
+  }
 
-    if (action === 'create') {
-      const text = clean(body.text, MAX_TEXT);
-      if (!text) return { status: 400, payload: { error: 'Missing text' } };
-      const thread = {
-        id: crypto.randomUUID(),
-        createdAt: now,
-        authorRole: role,
-        author,
-        screen: clean(body.screen, 64),
-        screenLabel: clean(body.screenLabel, 120),
-        anchor: body.anchor && typeof body.anchor === 'object' ? body.anchor : null,
-        proto: clean(body.proto, 64) || null,
-        page: clean(body.page, 200) || null,
-        resolved: false,
-        messages: [{ author, role, text, at: now }],
-      };
-      await this.ctx.storage.put(`t:${thread.id}`, thread);
-      this.threads.push(thread);
-      return { status: 200, payload: { thread } };
+  async fetch(request) {
+    try {
+      return await this.handle(request);
+    } catch (e) {
+      console.error(`room ${this.ctx.id}: ${e?.stack || e}`);
+      return json(500, { error: 'Server error' });
     }
-
-    const tid = String(body.threadId || '');
-    if (!/^[a-f0-9-]{36}$/.test(tid)) return { status: 404, payload: { error: 'Thread not found' } };
-    const thread = this.threads.find((t) => t.id === tid);
-    if (!thread || !canSee(role, thread)) {
-      return { status: 404, payload: { error: 'Thread not found' } };
-    }
-
-    if (action === 'reply') {
-      const text = clean(body.text, MAX_TEXT);
-      if (!text) return { status: 400, payload: { error: 'Missing text' } };
-      thread.messages.push({ author, role, text, at: now });
-    } else if (action === 'edit') {
-      const text = clean(body.text, MAX_TEXT);
-      const target = Number(body.at);
-      if (!text || !target) return { status: 400, payload: { error: 'Missing text or target' } };
-      const msg = thread.messages.find((m) => m.at === target);
-      if (!msg || msg.author !== author || msg.role !== role) {
-        return { status: 403, payload: { error: 'Not your message' } };
-      }
-      msg.text = text;
-      msg.edited = true;
-    } else if (action === 'resolve') {
-      thread.resolved = Boolean(body.resolved);
-    } else if (action === 'delete') {
-      const own = thread.authorRole === role && thread.author === author;
-      if (role !== 'designer' && !own) return { status: 403, payload: { error: 'Not allowed' } };
-      await this.ctx.storage.delete(`t:${tid}`);
-      this.threads = this.threads.filter((t) => t.id !== tid);
-      return { status: 200, payload: { ok: true } };
-    } else {
-      return { status: 400, payload: { error: 'Unknown action' } };
-    }
-
-    await this.ctx.storage.put(`t:${tid}`, thread);
-    return { status: 200, payload: { thread } };
   }
 }
 
@@ -192,6 +164,10 @@ export default {
       const body = await req.json().catch(() => ({}));
       const cleanName = clean(body.name, MAX_NAME);
       if (!cleanName) return json(400, { error: 'Missing name' }, cors);
+      // Set by Cloudflare, not by the caller. Local runs have no such header.
+      const ip = req.headers.get('CF-Connecting-IP') || (req.headers.get('X-Forwarded-For') || 'local').split(',')[0].trim();
+      const auth = env.ROOM.getByName(AUTH_ROOM);
+      if (await auth.loginBlocked(ip)) return json(429, { error: 'Too many attempts' }, cors);
       const password = body.password;
       const role =
         password && password === env.DESIGNER_PASSWORD
@@ -199,6 +175,7 @@ export default {
           : password && password === env.CLIENT_PASSWORD
             ? 'client'
             : null;
+      await auth.noteLogin(ip, Boolean(role));
       if (!role) {
         await new Promise((r) => setTimeout(r, 800));
         return json(401, { error: 'Wrong password' }, cors);
@@ -210,29 +187,43 @@ export default {
       return json(200, { role, token }, cors);
     }
 
-    if (url.pathname === '/api/comments') {
+    if (url.pathname === '/api/comments' || url.pathname === '/api/file') {
       const session = await sessionFromHeaders(
         req.headers.get('cookie') || '',
         req.headers.get('authorization') || '',
         env.SESSION_SECRET
       );
       if (!session) return json(401, { error: 'Not authenticated' }, cors);
-      const role = session.r;
+      if (req.method !== 'GET' && req.method !== 'POST') {
+        return json(405, { error: 'Method not allowed' }, cors);
+      }
+      if (url.pathname === '/api/file' && req.method !== 'GET') {
+        return json(405, { error: 'Method not allowed' }, cors);
+      }
+      const role = session.r === 'designer' ? 'designer' : 'client';
       const author = clean(session.n, MAX_NAME) || (role === 'designer' ? 'Designer' : 'Client');
       const q = (url.searchParams.get('room') || '').toLowerCase();
       const stub = env.ROOM.getByName(ROOM_RE.test(q) ? q : '_');
 
-      if (req.method === 'GET') {
-        const data = await stub.getAll(role);
-        // v1: this edition speaks create/reply/edit/resolve/delete/edge only.
-        // The overlay reads this and stops offering statuses, media and the map
-        // instead of firing actions that would 400 here.
-        return json(200, { v: 1, role, name: author, ...data }, cors);
+      // The body is buffered here, not streamed, so an oversized payload is
+      // refused before it reaches the room's storage.
+      let body;
+      if (req.method === 'POST') {
+        body = await req.text();
+        if (body.length > MAX_BODY) return json(413, { error: 'Payload too large' }, cors);
       }
-      if (req.method !== 'POST') return json(405, { error: 'Method not allowed' }, cors);
-      const body = await req.json().catch(() => ({}));
-      const { status, payload } = await stub.mutate(role, author, body);
-      return json(status, payload, cors);
+      const headers = new Headers({
+        'X-Fp-Role': role,
+        // Names are not latin-1 (a reviewer may be "Дмитро"), and header values are.
+        'X-Fp-Author': encodeURIComponent(author),
+      });
+      if (body !== undefined) headers.set('Content-Type', 'application/json');
+      const res = await stub.fetch(
+        new Request(url.toString(), { method: req.method, headers, body })
+      );
+      const out = new Headers(res.headers);
+      for (const [k, v] of Object.entries(cors)) out.set(k, v);
+      return new Response(res.body, { status: res.status, headers: out });
     }
 
     if (url.pathname.startsWith('/api/')) return json(404, { error: 'Not found' }, cors);
@@ -288,8 +279,9 @@ p{color:#525252}.ok{color:#16a34a;font-weight:600}</style></head><body>
 <p>This service powers the design-review comment overlay on PR previews.
 There is nothing to browse here — the overlay appears on the preview pages
 themselves (press <code>C</code> to comment).</p>
-<p>It stores only comment text and commenter names, partitioned per PR.
-Endpoints: <code>/overlay.js</code>, <code>/api/login</code>, <code>/api/comments</code>.</p>
+<p>It stores only comment text, commenter names and the pictures reviewers
+attach, partitioned per PR. Endpoints: <code>/overlay.js</code>,
+<code>/api/login</code>, <code>/api/comments</code>, <code>/api/file</code>.</p>
 <p>Want to try the interface? <a href="/demo">Open the demo screen</a> and sign
 in with a review password.</p>
 </body></html>`,
