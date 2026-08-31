@@ -74,6 +74,28 @@ may hold before uploads are refused with 507. Verify with
 `scripts/worker-smoke.sh` and `npm run e2e:worker` before pointing reviewers at
 it.
 
+## Already on v2
+
+Nothing to migrate — the fixes are in the code, so a deployment gets them by
+redeploying:
+
+```bash
+# from <skill-dir>/template, into the project:
+cp public/overlay.js public/overlay.css <project>/public/
+cp -R lib/. <project>/lib/ && cp -R api/. <project>/api/
+cd <project> && vercel deploy --prod --yes
+bash <skill-dir>/scripts/smoke.sh https://<domain> "<team password>" "<client password>"
+```
+
+The Worker edition takes `cd worker && npx wrangler deploy`, then
+`scripts/worker-smoke.sh`. Local mode needs no step beyond copying the files.
+
+Two things behave differently afterwards, both by design. A comment whose
+element is not on the page is no longer pinned at the place it used to occupy —
+it waits, and lands the moment its state is reopened. And comments and
+transitions made before this version carry no record of how to reach them: each
+learns, permanently, the first time somebody walks that path by hand.
+
 ## Not covered
 
 - Local mode (`server.js`) needs no migration: delete nothing; new fields appear as they are used.

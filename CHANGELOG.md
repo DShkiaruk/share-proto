@@ -46,6 +46,28 @@ One repo for all modes (Vercel · local · embed), a storage layer that survives
 - Login brake: ten wrong passwords from one address and that address is refused for ten minutes. Held in one Durable Object, so unlike the per-instance counter the other editions keep, it is shared by every request the worker sees.
 - Every server announces its API version (`v`) and the overlay hides what an older one cannot do.
 
+## v2.1 — 2026-08-31
+
+Everything reported from a live deployment, and the same behaviour on all three
+servers.
+
+### Where a comment lives
+- A comment's trail — the clicks that reopen the state it was left in — is kept for **every** comment, not only those inside a container the overlay could classify. A detail panel docked in the layout is not a floating layer and never was classifiable; that is exactly the case that lost its trail.
+- A pin is drawn in one of two honest places: on its element, or as a ghost on the click that brings that element back. The old third answer — the stored document fraction — put confident pins on whatever had moved into their place, and is gone.
+- Clicking a comment whose element is absent waits for it instead of giving up, and **learns the way** once someone opens that state by hand (`trail` action). Older comments heal one at a time.
+- `scrollIntoView` walks every scrollable ancestor, so a trigger inside a list that scrolls independently of the page is reachable.
+
+### The map
+- Laid out as a flow: columns are clicks from the opening screen and are labelled, the entry is flagged, screens nothing links to get their own band, and exactly one card says "you are here".
+- Right-angled edges with one port each, returns dashed in their own lanes, labels beside their target with the ground painted behind them.
+- Opaque panel on its own ground with a dot grid — the prototype used to show through, and white cards sat on white.
+- Comment on a screen from its card (no anchor, no pin, "About this screen"); a designer can add a picture to a screen that has none, and screens a designer visits are captured automatically when the overlay is idle.
+- A card takes you to its screen even when the way in needs an in-screen step first: an edge now carries those clicks and the walk replays them. Arrival is exact, so a walk toward a sub-state no longer stops on its parent and calls it success.
+
+### Servers
+- New action `trail`; `navTrail` in every GET. The Vercel functions, `server.js` and the Worker room all speak them.
+- `tests/unit/parity.test.mjs` compares the three sources: same actions, same GET fields, same shared rules. `scripts/smoke.sh` and `scripts/worker-smoke.sh` now run the same new checks, so a deployment is verified the same way whichever edition serves it.
+
 ## v1 — 2026-07-03
 
 Password-protected prototype sharing with pins, threads, replies, resolve, unread dots, learned "Go to comment" navigation, auto dark theme, mobile support.

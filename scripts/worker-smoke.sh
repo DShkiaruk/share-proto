@@ -114,6 +114,25 @@ check "$(api "$CLIENT_T" "$D/api/comments?room=pr-7" | jq_ 'print("Secret" in d.
 check "$(code -H "Authorization: Bearer $CLIENT_T" "$D/api/file?p=$SPATH&room=pr-7")" 404 "and its picture 404s for the client"
 check "$(code -H "Authorization: Bearer $TEAM_T" "$D/api/file?p=$SPATH&room=pr-7")" 200 "while the designer still sees it"
 
+# --- what the newest overlay needs of a server ---------------------------
+# A comment about a screen carries no anchor and no pin.
+SCREEN_C=$(api "$TEAM_T" -d '{"action":"create","text":"about the screen","screen":"Home","screenLabel":"Home"}' "$D/api/comments?room=pr-7")
+check "$(printf '%s' "$SCREEN_C" | jq_ 'print(d.get("thread",{}).get("anchor"), d.get("thread",{}).get("trail"))')" "None []" "a comment can be about a screen, with no anchor"
+
+# A comment learns the way back to its state, once.
+LEARN=$(api "$TEAM_T" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
+TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#row","t":"button","txt":"Acme"},"txt":"Acme"}]}'
+check "$(api "$TEAM_T" -d "$TRAIL" "$D/api/comments?room=pr-7" | jq_ 'print(len(d.get("thread",{}).get("trail",[])), d["thread"]["trail"][0]["txt"])')" "1 Acme" "a comment can be taught the way back"
+RETEACH='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#other","t":"button","txt":"Other"},"txt":"Other"}]}'
+check "$(api "$TEAM_T" -d "$RETEACH" "$D/api/comments?room=pr-7" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
+check "$(code -X POST -H "Authorization: Bearer $TEAM_T" -H 'Content-Type: application/json' -d '{"action":"trail","threadId":"'"$LEARN"'","trail":[]}' "$D/api/comments?room=pr-7")" 400 "an empty trail teaches nothing"
+
+# An edge remembers the in-screen clicks that make its control reachable.
+EDGE='{"action":"edge","from":"Home","to":"Report","anchor":{"path":"a#r","t":"a","txt":"Go to report"},"trail":[{"anchor":{"path":"button#adv","t":"button","txt":"Advanced"},"txt":"Advanced"}]}'
+api "$TEAM_T" -d "$EDGE" "$D/api/comments?room=pr-7" >/dev/null
+check "$(api "$TEAM_T" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("navTrail",{}).get("Home>Report",[{}])[0].get("txt"))')" "Advanced" "an edge keeps the steps that reach its control"
+check "$(api "$TEAM_T" -d '{"action":"mapmeta","hide":"Report"}' "$D/api/comments?room=pr-7" | jq_ 'print(int("Report" in d.get("mapmeta",{}).get("hidden",[])))')" 1 "cleanup: a test screen can be hidden from the map"
+
 # --- CORS ---------------------------------------------------------------
 check "$(curl -s -D - -o /dev/null -H 'Origin: http://localhost:4174' -H "Authorization: Bearer $TEAM_T" "$D/api/comments" | grep -ci 'access-control-allow-origin: http://localhost:4174')" 1 "an allow-listed origin gets CORS headers"
 check "$(curl -s -D - -o /dev/null -H 'Origin: https://evil.example' -H "Authorization: Bearer $TEAM_T" "$D/api/comments" | grep -ci 'access-control-allow-origin')" 0 "an unknown origin gets none"

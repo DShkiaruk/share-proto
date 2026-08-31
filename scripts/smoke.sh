@@ -50,6 +50,32 @@ DELETE='{"action":"delete","threadId":"'"$TID"'"}'
 check "$(code -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$DELETE" "$D/api/comments")" 200 "cleanup: delete smoke thread"
 check "$(code "$D/api/file?p=previews/x/y.jpg")" 401 "GET /api/file without cookie → 401"
 
+# What the newest overlay needs of a server. Same checks as the Worker's own
+# smoke, so a reviewer cannot tell the editions apart.
+SCREEN=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
+  -d '{"action":"create","text":"smoke: about the screen","screen":"smoke","screenLabel":"smoke"}' "$D/api/comments")
+SCREEN_ID=$(printf '%s' "$SCREEN" | jq_ 'print(d.get("thread",{}).get("id",""))')
+check "$(printf '%s' "$SCREEN" | jq_ 'print(d.get("thread",{}).get("anchor"), d.get("thread",{}).get("trail"))')" "None []" "a comment can be about a screen, with no anchor"
+curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$SCREEN_ID"'"}' "$D/api/comments"
+
+LEARN=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
+  -d '{"action":"create","text":"smoke: learns the way","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
+  "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("id",""))')
+TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#row","t":"button","txt":"Acme"},"txt":"Acme"}]}'
+check "$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$TRAIL" "$D/api/comments" | jq_ 'print(len(d.get("thread",{}).get("trail",[])), d["thread"]["trail"][0]["txt"])')" "1 Acme" "a comment can be taught the way back"
+RETEACH='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#other","t":"button","txt":"Other"},"txt":"Other"}]}'
+check "$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$RETEACH" "$D/api/comments" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
+curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$LEARN"'"}' "$D/api/comments"
+
+EDGE='{"action":"edge","from":"smoke-a","to":"smoke-b","anchor":{"path":"a#r","t":"a","txt":"Go"},"trail":[{"anchor":{"path":"button#adv","t":"button","txt":"Advanced"},"txt":"Advanced"}]}'
+curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$EDGE" "$D/api/comments"
+check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(d.get("navTrail",{}).get("smoke-a>smoke-b",[{}])[0].get("txt"))')" "Advanced" "an edge keeps the steps that reach its control"
+# An edge cannot be deleted, so keep the two test screens off everyone's map.
+for L in smoke-a smoke-b; do
+  curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"mapmeta","hide":"'"$L"'"}' "$D/api/comments"
+done
+check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'h=d.get("mapmeta",{}).get("hidden",[]); print(int("smoke-a" in h and "smoke-b" in h))')" 1 "cleanup: the test screens are hidden from the map"
+
 # Concurrency: parallel writers must retry, never 500 (Blob reports an in-flight
 # collision differently from a stale ETag, and the difference used to leak out).
 RACE_TMP=$(mktemp -d)
