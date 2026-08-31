@@ -121,3 +121,31 @@ test('H hides everything and the dot brings it back; J/K walk comments', async (
   await page.keyboard.press('KeyK');
   await expect(inOverlay(page, '.popover .num')).toHaveText('#1', { timeout: 10_000 });
 });
+
+// The README says comments may not be placeable inside a native modal dialog.
+// This pins what actually happens, because "not placeable" undersells it: while
+// showModal() is up, everything outside the dialog is inert, so the overlay
+// cannot be clicked at all — and it must come back the moment the dialog closes.
+// Creates no comment on purpose: later specs count what place.spec left behind.
+test('a native modal dialog makes the overlay unreachable, and closing it gives the overlay back', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  const toolbarHit = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('[data-fp-host]');
+      const r = host.shadowRoot.querySelector('.tb-btn').getBoundingClientRect();
+      return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === host;
+    });
+  expect(await toolbarHit()).toBe(true);
+
+  await page.locator('#open-dialog').click();
+  await expect(page.locator('#dlg')).toBeVisible();
+  expect(await page.evaluate(() => document.querySelector('#dlg').matches(':modal'))).toBe(true);
+  expect(await toolbarHit(), 'the toolbar is behind the modal, not merely unclickable').toBe(false);
+
+  await page.locator('#dlg-close').click();
+  await expect(page.locator('#dlg')).toBeHidden();
+  expect(await toolbarHit()).toBe(true);
+  await mouseClick(page, inOverlay(page, '.tb-btn').first());
+  await expect(inOverlay(page, '.click-layer')).toBeVisible(); // it really is live again
+  await page.keyboard.press('Escape');
+});

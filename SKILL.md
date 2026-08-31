@@ -31,7 +31,7 @@ If it's unclear which case applies, ask one short question.
 
 Same system without deploying anywhere: `template/server.js` (plain Node >= 18, zero npm deps — no `npm install`) replaces middleware + `api/*` + Blob with one local process. Comments live in `data/comments.json`. Pick this when the prototype must not be hosted externally (client security policy), the user has no Vercel account, or the link should exist only for the duration of the review.
 
-1. **Assemble** as usual with `assemble.py`, then instead of steps 3–5:
+1. **Assemble** as usual with `assemble.py` — but skip the `npm install` in step 2: `server.js` has no dependencies, and local mode never runs `api/*`. Then instead of steps 3–5:
 2. **Run**: `cd <target-dir> && node server.js` (options: `--port <n>`, default 3456). First run generates both passwords + a session secret into `data/secrets.json` and prints them with the URL; they survive restarts. Env vars `DESIGNER_PASSWORD` / `CLIENT_PASSWORD` / `SESSION_SECRET` override.
 3. **Share beyond localhost** (optional): `cloudflared tunnel --url http://localhost:3456` (`brew install cloudflared` if missing) → temporary `trycloudflare.com` URL. The link exists only while both processes run and the machine is awake — tell the user this is a feature (nothing stays hosted) and a constraint (laptop must stay on during review). Passwords still gate access; cookies work through the tunnel (`Secure` is added when `x-forwarded-proto` says https).
 4. **Smoke test**: same checks as step 6 below, against `http://localhost:<port>`.
@@ -87,8 +87,8 @@ npx wrangler deploy
 ```
 
 Verify before handing the URL over: `scripts/worker-smoke.sh` runs the whole
-contract against a local `wrangler dev` (24 checks), and `npm run e2e:worker`
-runs the embed spec — the real overlay on a foreign page — against it. On the
+contract against a local `wrangler dev`, and `npm run e2e:worker` runs the
+embed spec — the real overlay on a foreign page — against it. On the
 deployed host, open `/demo`: a fake screen with the overlay attached, so the
 client can try commenting before any PR carries the tag.
 
@@ -223,6 +223,8 @@ Then briefly, in prose:
 
 - Vercel Hobby plan formally requires Pro for commercial/client work; the deploy works either way — mention it once.
 - The overlay is design-neutral (near-black on white, the platform UI face). If the prototype's brand clashes hard, you may re-tint the CSS variables at the top of `public/overlay.css` — optional, don't gold-plate.
+- Prototypes with a native modal (`dialog.showModal()`): while it is open the browser makes the whole page outside it inert, so the overlay cannot be clicked at all. Say so when handing over — a reviewer who tries will think the tool is broken — and tell them to comment on the control that opens it. Everything works again the moment the dialog closes, and the map still gets the dialog as a screen.
+- `smoke.sh` against local mode prints `n/a` for the store-path check: that header only exists where there is a Blob-backed state document. `ALL OK` is still the bar.
 - Multi-page prototypes (several HTML files): put extra pages in `public/` and inject the overlay tag into each; comments work per-page automatically. Threads remember their page (`page` field), so "Go to comment" navigates across pages by direct URL + deep link — no learned click-graph needed between files.
 - Snapshot sets (frozen pages saved from a real app, e.g. SingleFile exports — scripts stripped, buttons dead): same as multi-page, plus generate a minimal neutral `index.html` listing the screens (styled like login.html), because frozen pages have no working navigation of their own. Reviewers browse via the index; "Go to comment" still teleports them directly.
 

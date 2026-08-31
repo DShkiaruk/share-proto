@@ -63,7 +63,8 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - Vercel's free Hobby plan is formally for non-commercial use (Pro is $20/mo if needed).
 - Read state is per browser; there are no notifications outside the page (deliberate).
 - Comments and images live in a private Blob store; the API is the only reader.
-- Comments inside UI that closes on *focus* leaving it (some component libraries) or inside a native `<dialog>` opened with `showModal()` may not be placeable — the composer needs focus, and a modal dialog makes the rest of the page inert.
+- While a native `<dialog>` is open with `showModal()`, the browser makes everything outside it inert — the overlay included — so it stops responding until the dialog is closed. Comment on the control that opens the dialog instead; the crawler still captures the dialog as a screen for the map.
+- Comments inside UI that closes when focus leaves it (some component libraries) may not be placeable — the composer needs focus.
 - The Cloudflare Worker edition stores pictures inside its Durable Object, capped per room (`ROOM_MEDIA_BUDGET_MB`, 64 MB by default); a full room refuses new pictures rather than dropping old ones. Every server announces its API version, and the overlay hides whatever an older one cannot do.
 
 MIT

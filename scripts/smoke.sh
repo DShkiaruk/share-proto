@@ -7,6 +7,7 @@ D=${D%/}
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
 check() { if [ "$1" = "$2" ]; then echo "  ok   $3"; else echo "  FAIL $3 (got: $1, want: $2)"; fail=1; fi; }
+skip() { echo "  n/a  $1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 login() { curl -s -c "$TMP/$1.jar" -H 'Content-Type: application/json' -d '{"password":"'"$2"'","name":"smoke-'"$1"'"}' "$D/api/login"; }
 # Non-JSON bodies (500 pages) print an empty value instead of a traceback.
@@ -27,10 +28,19 @@ check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | jq_ 'print(d.get("role")
 
 # Role isolation: a designer-created thread must be invisible to the client.
 check "$(curl -s -D - -o /dev/null -b "$TMP/team.jar" "$D/api/comments" | grep -ci 'cache-control: no-store')" 1 "GET /api/comments is no-store"
+# X-Store-Path names which path through the derived state document a request
+# took. Only the Blob edition has such a document; local mode answers from one
+# file and never sets the header, so its absence is a fact about the server,
+# not a failure — but if a GET carries it, a create must too.
+BLOB_BACKED=$(curl -s -D - -o /dev/null -b "$TMP/team.jar" "$D/api/comments" | grep -ci '^x-store-path:')
 TID=$(curl -s -D "$TMP/create.h" -b "$TMP/team.jar" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke (designer)","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
   "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("id",""))')
-check "$(grep -i '^x-store-path:' "$TMP/create.h" | tr -d '\r' | awk '{print $2}')" patch "create took the fast path (no rebuild, no list)"
+if [ "$BLOB_BACKED" = 1 ]; then
+  check "$(grep -i '^x-store-path:' "$TMP/create.h" | tr -d '\r' | awk '{print $2}')" patch "create took the fast path (no rebuild, no list)"
+else
+  skip "create took the fast path — this server keeps no derived document"
+fi
 check "$(curl -s -b "$TMP/client.jar" "$D/api/comments" | grep -c "$TID")" 0 "client does not see designer thread"
 check "$(curl -s -b "$TMP/team.jar" "$D/api/comments" | grep -c "$TID")" 1 "designer sees own thread"
 REPLY='{"action":"reply","threadId":"'"$TID"'","text":"x"}'
