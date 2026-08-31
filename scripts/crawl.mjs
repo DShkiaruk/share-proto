@@ -61,7 +61,10 @@ const controls = () =>
   });
 
 const shoot = async (lbl) => {
+  // The map wants the prototype, not the comment UI on top of it.
+  await page.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = 'hidden'));
   const buf = await page.screenshot({ type: 'jpeg', quality: 80 });
+  await page.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = ''));
   return page.evaluate(
     async ([l, b64]) =>
       (

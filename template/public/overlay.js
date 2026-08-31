@@ -1141,7 +1141,7 @@
     // the composer never hides behind the keyboard.
     const vw = window.visualViewport ? window.visualViewport.width : innerWidth;
     const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
-    const w = Math.min(320, vw - 24);
+    const w = Math.min(340, vw - 24);
     const h = Math.min(popover.offsetHeight || 200, vh - 24);
     let px = x + 20;
     let py = y - 8;
@@ -1384,7 +1384,7 @@
     const r = anchorBtn.getBoundingClientRect();
     const pr = popover.getBoundingClientRect();
     statusMenu.style.top = `${r.bottom - pr.top + 6}px`;
-    statusMenu.style.right = `${Math.max(8, pr.right - r.right)}px`;
+    statusMenu.style.left = `${Math.max(8, r.left - pr.left)}px`;
   }
   function askWontNote(t) {
     statusMenu.replaceChildren(el('div', 'menu-label', 'Why won’t this be done?'));
@@ -1484,9 +1484,6 @@
       const v = state.versions.find((x) => x.id === t.proto);
       who.appendChild(el('span', 'badge old-version', v?.label ? `Older version · ${v.label}` : 'Older version'));
     }
-    const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
-    const at = ordered.findIndex((x) => x.id === t.id);
-    if (at >= 0) who.appendChild(el('span', 'nav-pos', `${at + 1} of ${ordered.length}`));
     head.appendChild(who);
 
     const linkBtn = el('button', 'icon-btn');
@@ -1504,6 +1501,7 @@
     });
     head.appendChild(linkBtn);
 
+    const meta = el('div', 'head-meta');
     const statusBtn = el('button', `status s-${statusOf(t)}`, STATUS_LABEL[statusOf(t)]);
     statusBtn.title = 'Change status';
     statusBtn.setAttribute('aria-label', `Status: ${STATUS_LABEL[statusOf(t)]} — change`);
@@ -1511,7 +1509,11 @@
       e.stopPropagation();
       toggleStatusMenu(t, statusBtn);
     });
-    head.appendChild(statusBtn);
+    meta.appendChild(statusBtn);
+    if (t.anchor?.container?.name) meta.appendChild(el('span', 'in-container', `in: ${t.anchor.container.name}`));
+    const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
+    const at = ordered.findIndex((x) => x.id === t.id);
+    if (at >= 0) meta.appendChild(el('span', 'nav-pos', `${at + 1} of ${ordered.length}`));
 
     const canDelete = state.role === 'designer' || (t.authorRole === state.role && t.author === myLabel());
     if (canDelete) {
@@ -1551,6 +1553,7 @@
     closeBtn.addEventListener('click', closePopover);
     head.appendChild(closeBtn);
     popover.appendChild(head);
+    popover.appendChild(meta);
 
     if (!pinEl && !onThisScreen(t)) {
       if (t.preview) {
@@ -2215,7 +2218,7 @@
 
     const controls = el('div', 'sb-controls');
     const seg = el('div', 'seg status-seg');
-    const SEG = { active: 'Active', progress: 'In progress', done: 'Done', wont: 'Won’t do', all: 'All' };
+    const SEG = { active: 'Active', progress: 'Progress', done: 'Done', wont: 'Won’t do', all: 'All' };
     for (const f of ['active', 'progress', 'done', 'wont', 'all']) {
       const b = el('button', state.filter === f ? 'on' : '', SEG[f]);
       b.title = f === 'active' ? 'Open and in progress' : f === 'all' ? 'All statuses' : STATUS_LABEL[f];
@@ -2239,8 +2242,10 @@
       localStorage.setItem('fp_sort', state.sort);
       renderSidebar();
     });
-    controls.append(seg, sort);
+    controls.append(seg);
     sidebar.appendChild(controls);
+    const row2 = el('div', 'sb-row2');
+    sidebar.appendChild(row2);
 
     if (state.role === 'designer') {
       const chips = el('div', 'chips');
@@ -2253,8 +2258,9 @@
         });
         chips.appendChild(c);
       }
-      sidebar.appendChild(chips);
+      row2.appendChild(chips);
     }
+    row2.appendChild(sort);
 
     const list = el('div', 'sb-list');
     if (state.versionFilter) {
