@@ -859,6 +859,7 @@
 
   let inflight = null;
   let lastSig = '';
+  let lastMapSig = { sig: '', map: '' };
   let legacyNoticeShown = false;
   function refresh() {
     if (!inflight) {
@@ -885,8 +886,13 @@
               t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
             ]),
             state.versions.map((v) => [v.id, v.label]),
-            Object.entries(state.shots), state.mapmeta, Object.keys(state.nav).sort(),
+            Object.keys(state.nav).sort(),
           ]);
+          // Screens and map metadata are the map's business only. Folding them
+          // into the same signature meant a background screen capture repainted
+          // the sidebar — under the cursor, losing whatever hover or click was
+          // in flight.
+          const mapSig = JSON.stringify([Object.entries(state.shots), state.mapmeta]);
           if (state.serverV < 2 && !legacyNoticeShown) {
             legacyNoticeShown = true;
             toast('This comments server is older than the overlay — statuses, pictures and the map are off here', 8000);
@@ -894,8 +900,12 @@
           if (sig !== lastSig) {
             lastSig = sig;
             renderAll();
-            // Never rebuild the map out from under a rename in progress.
-            if (state.map && !mapEl?.querySelector('.map-rename')) renderMap();
+          }
+          if (sig !== lastMapSig.sig || mapSig !== lastMapSig.map) {
+            lastMapSig = { sig, map: mapSig };
+            // Never rebuild the map out from under someone typing into it — a
+            // rename or a comment.
+            if (state.map && !mapEl?.querySelector('.map-rename, .compose')) renderMap();
           }
           // Live-update an open thread when new replies arrive — unless the
           // viewer is mid-typing a reply.
@@ -2539,6 +2549,25 @@
   // first preview on a screen). Layout: BFS layers from the boot screen.
   let mapEl = null;
   let focusNode = () => {};
+  // The card composer, and the view it moved: opening it zooms in, so closing
+  // it has to give the map back the way it was.
+  let mapCompose = null;
+  function closeMapCompose({ restore = true } = {}) {
+    if (!mapCompose) return;
+    const { row, btn, view } = mapCompose;
+    mapCompose = null;
+    row.remove();
+    btn?.classList.remove('on');
+    if (restore && view && mapEl) {
+      Object.assign(mapView, view);
+      const canvas = mapEl.querySelector('.map-canvas');
+      if (canvas) {
+        canvas.style.transition = 'transform 220ms var(--ease)';
+        canvas.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.k})`;
+        setTimeout(() => canvas && (canvas.style.transition = ''), 260);
+      }
+    }
+  }
   const mapView = { x: 40, y: 40, k: 1 };
   let showHiddenNodes = false;
   const NODE_W = 240;
@@ -2664,6 +2693,7 @@
     else openMap();
   }
   function closeMap() {
+    mapCompose = null;
     mapEl?.remove();
     mapEl = null;
     state.map = false;
@@ -2942,7 +2972,9 @@
       cbtn.title = `Comment on ${n.name}`;
       cbtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (card.querySelector('.compose')) return;
+        if (mapCompose?.btn === cbtn) return closeMapCompose(); // second press = never mind
+        closeMapCompose();
+        const before = { ...mapView };
         focusNode(n);
         let box;
         box = composeRow({
@@ -2963,6 +2995,7 @@
                 kind: null,
                 images: box.images(),
               });
+              closeMapCompose({ restore: false });
               await refresh();
               renderMap();
             } catch {
@@ -2972,6 +3005,16 @@
           },
         });
         card.appendChild(box.row);
+        cbtn.classList.add('on');
+        cbtn.title = 'Cancel';
+        mapCompose = { row: box.row, btn: cbtn, view: before };
+        // Escape belongs to the composer first: losing the whole map because you
+        // changed your mind about one comment is not a way out.
+        box.row.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Escape') return;
+          ev.stopPropagation();
+          closeMapCompose();
+        });
         box.ta.focus();
       });
       acts.appendChild(cbtn);
@@ -3057,6 +3100,7 @@
       const t = e.target;
       const onBackground = t === viewport || t === canvas || (t instanceof SVGElement && t.closest('.map-edges'));
       if (!onBackground) return;
+      closeMapCompose();
       drag = { x: e.clientX - mapView.x, y: e.clientY - mapView.y };
       viewport.setPointerCapture(e.pointerId);
     });
@@ -3186,6 +3230,7 @@
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (e.key === 'Escape') {
       if (lightbox) closeLightbox();
+      else if (mapCompose) closeMapCompose();
       else if (state.map) closeMap();
       else if (statusMenu) closeStatusMenu();
       else if (state.draft) cancelDraft();

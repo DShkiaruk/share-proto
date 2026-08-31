@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, mouseClick, inOverlay, apiGet } from './helpers.mjs';
+import { login, mouseClick, inOverlay, settledBox, apiGet } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -67,7 +67,7 @@ test('hovering a sidebar row shows the preview card', async ({ page }) => {
   await login(page, 'Designer', TEAM);
   await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
   const row = inOverlay(page, '.sb-row').filter({ hasText: 'with preview' });
-  const box = await row.boundingBox();
+  const box = await settledBox(row); // the sidebar is still sliding in
   await page.mouse.move(box.x + 40, box.y + 10);
   const card = inOverlay(page, '.preview-card');
   await expect(card).toBeVisible({ timeout: 3000 });

@@ -1636,6 +1636,7 @@
 }
 .map-act svg { width: 12px; height: 12px; }
 .map-act:hover { color: var(--ink); border-color: var(--muted-fg-2); }
+.map-act.on { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .map-act:disabled { opacity: 0.5; }
 .map-node:has(.compose) { z-index: 2; } /* the composer may outgrow the card */
 .map-node .compose { border-top: 1px solid var(--border); }

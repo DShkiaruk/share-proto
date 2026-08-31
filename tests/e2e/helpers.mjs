@@ -45,3 +45,18 @@ export async function apiPost(page, body) {
     body
   );
 }
+
+// The sidebar slides in over 200 ms, so a box measured right after opening it
+// is a moving target — reading it and then aiming the mouse there is a coin
+// flip. Wait until the element has stopped moving, then measure.
+export async function settledBox(locator, tries = 20) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    const box = await locator.boundingBox();
+    if (box && last && Math.abs(box.x - last.x) < 0.5 && Math.abs(box.y - last.y) < 0.5) return box;
+    last = box;
+    await locator.page().waitForTimeout(50);
+  }
+  if (!last) throw new Error('element never appeared');
+  return last;
+}

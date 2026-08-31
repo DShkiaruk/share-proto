@@ -307,5 +307,53 @@ test('commenting on a card brings it to a readable distance', async ({ page }) =
   expect(near.x + near.width).toBeLessThanOrEqual(1281);
   expect(near.y).toBeGreaterThan(-1);
   await expect(card.locator('.compose textarea')).toBeVisible();
+  // Two escapes now: the first belongs to the composer, the second to the map.
   await page.keyboard.press('Escape');
+  await expect(card.locator('.compose')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(inOverlay(page, '.map')).toHaveCount(0);
+});
+
+// Reported: the composer opened and there was no way back — Escape closed the
+// whole map, and the zoom it did to bring the card close was never undone.
+test('the card composer can be dismissed, and gives the view back', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  // Its own screen, so the test does not depend on what ran before it.
+  await apiPost(page, { action: 'edge', from: 'Home', to: 'Zeta', anchor: { path: 'body', t: 'button', txt: 'Zeta' } });
+  await page.reload();
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  await expect(inOverlay(page, '.map')).toBeVisible();
+  const card = inOverlay(page, '.map-node[data-label="Zeta"]');
+  await expect(card).toBeVisible();
+  // Whatever "Fit" left — that is the view the reviewer must get back.
+  await page.waitForTimeout(300);
+  const before = await card.boundingBox();
+
+  const btn = card.locator('.map-act').filter({ hasText: 'Comment' });
+  await mouseClick(page, btn);
+  await expect(card.locator('.compose textarea')).toBeVisible();
+  await expect(btn).toHaveClass(/on/);
+  await page.waitForTimeout(400); // the move to a readable distance is animated
+  expect((await card.boundingBox()).width).toBeGreaterThan(before.width);
+
+  // Escape belongs to the composer, not the map.
+  await page.keyboard.press('Escape');
+  await expect(card.locator('.compose')).toHaveCount(0);
+  await expect(inOverlay(page, '.map')).toBeVisible();
+  await page.waitForTimeout(350);
+  const after = await card.boundingBox();
+  expect(Math.abs(after.width - before.width), 'the view came back').toBeLessThan(3);
+  expect(Math.abs(after.x - before.x)).toBeLessThan(3);
+
+  // The button is a toggle too.
+  await mouseClick(page, btn);
+  await expect(card.locator('.compose textarea')).toBeVisible();
+  await mouseClick(page, btn);
+  await expect(card.locator('.compose')).toHaveCount(0);
+  await page.waitForTimeout(350);
+  expect(Math.abs((await card.boundingBox()).x - before.x)).toBeLessThan(3);
+  await page.keyboard.press('Escape');
+  await expect(inOverlay(page, '.map')).toHaveCount(0);
 });
