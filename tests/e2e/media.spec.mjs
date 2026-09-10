@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, mouseClick, inOverlay, settledBox, apiGet } from './helpers.mjs';
+import { login, mouseClick, inOverlay, settledBox, apiGet, openList } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -65,7 +65,7 @@ test('an image attached via the paperclip is stored, rendered and opens a lightb
 
 test('hovering a sidebar row shows the preview card', async ({ page }) => {
   await login(page, 'Designer', TEAM);
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   const row = inOverlay(page, '.sb-row').filter({ hasText: 'with preview' });
   const box = await settledBox(row); // the sidebar is still sliding in
   await page.mouse.move(box.x + 40, box.y + 10);

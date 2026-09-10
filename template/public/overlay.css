@@ -16,6 +16,11 @@
   --danger: #dc2626;
   --unread: #3b82f6;
   --ring: #3b82f680;
+  /* Status glyphs and the client ring are graphics carrying meaning: each is
+     kept at 3:1 or better against --surface, in both themes. */
+  --st-progress: #b45309;
+  --st-done: #15803d;
+  --client-ring: #7c3aed;
   /* The map is a canvas, not a page: cards need a ground to sit on. */
   --map-ground: #eceef3;
   --map-dot: rgb(20 24 34 / 0.13);
@@ -52,6 +57,9 @@
   --surface: #1f1f1f;
   --danger: #ef4444;
   --unread: #60a5fa;
+  --st-progress: #fbbf24;
+  --st-done: #4ade80;
+  --client-ring: #a78bfa;
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.5);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.6), 0 4px 6px -4px rgb(0 0 0 / 0.6);
@@ -200,13 +208,16 @@
   border: 2px solid var(--surface);
 }
 
+/* Unread lives in the left gutter, where the eye already is on the way down
+   the list — and where it cannot push the time column around. */
 .row-dot {
-  width: 8px;
-  height: 8px;
+  position: absolute;
+  left: 6px;
+  top: 16px;
+  width: 6px;
+  height: 6px;
   border-radius: 9999px;
   background: var(--unread);
-  flex: none;
-  margin-left: 4px;
 }
 
 @keyframes fp-pop {
@@ -229,6 +240,15 @@
 .avatar.s20 { width: 20px; height: 20px; font-size: 10px; }
 .avatar.s24 { width: 24px; height: 24px; font-size: 11px; }
 .avatar.s28 { width: 28px; height: 28px; font-size: 12px; }
+
+/* Which side someone is on, said once and without a word: a client's avatar
+   wears a ring. The Client / Team filter above the list names both sides, and
+   the avatar's own tooltip repeats it for anyone who needs the word. */
+.avatar.r-client {
+  border-color: transparent;
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--client-ring);
+  margin: 1.5px;
+}
 
 /* ---- popover (composer + thread) ---- */
 
@@ -350,7 +370,9 @@
 
 .time {
   font-size: 11px;
-  color: var(--muted-fg);
+  /* Small text sits on a hovered row as often as on the panel: --muted-fg-2 is
+     the one that still clears AA against both. */
+  color: var(--muted-fg-2);
   white-space: nowrap;
 }
 
@@ -744,11 +766,11 @@
 
 .seg button {
   flex: 1;
-  height: 28px;
+  height: 26px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--muted-fg);
+  color: var(--muted-fg-2);
   transition: background 150ms, color 150ms;
 }
 
@@ -772,32 +794,56 @@
   padding: 14px 16px 6px;
 }
 
+/* A row is three lines, in the order they matter: who and when (quiet), what
+   they said (the only ink-coloured text), where it is (quiet). Everything the
+   row can say is left-aligned to one edge; the right edge belongs to the time
+   and to nothing else. */
 .sb-row {
+  position: relative;
   display: block;
   width: 100%;
   text-align: left;
-  padding: 10px 16px;
+  padding: 9px 16px 11px;
   transition: background 150ms;
 }
 
 .sb-row .meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted-fg-2);
+  margin-bottom: 3px;
 }
 
 .sb-row .meta .name {
-  font-weight: 600;
+  font-weight: 500;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* Glyphs and the hover preview sit together, right before the time, so the
+   time column starts at the same x on every row whatever else is on it. */
+.row-trail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+}
+
+.sb-row .time {
+  flex: none;
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .sb-row .excerpt {
   font-size: 13px;
-  color: var(--muted-fg);
-  padding-left: 32px;
+  color: var(--ink);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -807,14 +853,17 @@
 
 .sb-row .replies {
   font-size: 12px;
-  color: var(--muted-fg);
-  padding-left: 32px;
-  margin-top: 4px;
+  color: var(--muted-fg-2);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.sb-row.resolved .meta .name,
-.sb-row.resolved .excerpt {
-  opacity: 0.55;
+.sb-row.resolved .meta,
+.sb-row.resolved .excerpt,
+.sb-row.resolved .replies {
+  opacity: 0.6;
 }
 
 .check-ico {
@@ -1113,41 +1162,37 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The sort control is still a native <select> — it keeps the platform's own
+   menu on touch — but it wears the same 26px box, border and chevron as the
+   status control, so the header has one control language instead of two. */
 .sort {
   font: inherit;
   font-size: 12px;
+  height: 26px;
   color: var(--ink);
-  background: var(--muted);
+  background-color: var(--muted);
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 0 24px 0 9px;
   cursor: pointer;
+  appearance: none;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%235c5c5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 12px 12px;
 }
+.root.dark .sort {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23b8b8b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+}
+.sort option { color: var(--ink); background: var(--surface); }
 .sort:focus-visible {
   outline: 2px solid var(--ring);
-}
-.chips {
-  display: flex;
-  gap: 6px;
-  padding: 6px 16px 0;
-}
-.chip {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  color: var(--muted-fg);
-}
-.chip.on {
-  color: var(--primary-fg);
-  background: var(--primary);
-  border-color: var(--primary);
 }
 .num {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--muted-fg);
+  color: var(--muted-fg-2);
 }
 .nav-pos {
   margin-left: auto;
@@ -1268,18 +1313,25 @@
 .preview-card .body { padding: 10px 12px; }
 .preview-card .meta { font-size: 11px; color: var(--muted-fg); margin-bottom: 4px; font-variant-numeric: tabular-nums; }
 .preview-card .text { font-size: 13px; line-height: 1.4; max-height: 4.2em; overflow: hidden; }
+/* The preview is an action, not information: it waits for the pointer, in a
+   slot that is always reserved so nothing shifts when it appears. */
 .sb-row .eye {
-  display: none;
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  color: var(--muted-fg);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--muted-fg-2);
+  opacity: 0;
+  transition: opacity 120ms;
 }
-.sb-row .eye svg { width: 16px; height: 16px; }
+.sb-row:hover .eye,
+.sb-row .eye:focus-visible { opacity: 1; }
+.sb-row .eye svg { width: 15px; height: 15px; }
 @media (pointer: coarse) {
-  .sb-row .eye { display: grid; place-items: center; }
-  .status { min-height: 34px; padding: 8px 12px; }
+  .sb-row .eye { opacity: 1; width: 26px; height: 26px; }
+  .sb-row .eye svg { width: 16px; height: 16px; }
+  .status, .theme-tag.act { height: 34px; padding: 0 11px; }
   .status-menu > button { padding: 10px; }
 }
 .popover-preview {
@@ -1295,28 +1347,53 @@
 
 /* ---------- workflow: status, kind, reactions, new, versions ---------- */
 
-.status {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  color: var(--muted-fg);
+/* ---- state: one control shape, one glyph family ---- */
+
+/* Status is the only thing in a thread header that changes the comment, so it
+   is the only thing there shaped like a control: state glyph, the word, and a
+   chevron for the menu behind it. As a bare coloured label it read as
+   decoration and went unpressed. */
+.status,
+.theme-tag.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 8px;
   white-space: nowrap;
+  flex: none;
+  transition: background 120ms, border-color 120ms, box-shadow 120ms;
 }
-.status.s-progress, .status-tag.s-progress { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
-.status.s-done, .status-tag.s-done { color: #15803d; border-color: #86efac; background: #f0fdf4; }
-.status.s-wont, .status-tag.s-wont { color: var(--muted-fg); text-decoration: line-through; }
-.root.dark .status.s-progress, .root.dark .status-tag.s-progress { color: #fbbf24; border-color: #78350f; background: rgb(251 191 36 / 0.1); }
-.root.dark .status.s-done, .root.dark .status-tag.s-done { color: #4ade80; border-color: #14532d; background: rgb(74 222 128 / 0.1); }
-.status-tag {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
+.status svg,
+.theme-tag svg { width: 14px; height: 14px; flex: none; }
+.status .chev { color: var(--muted-fg-2); margin: 0 -2px 0 -1px; }
+.status .chev svg { width: 12px; height: 12px; }
+@media (hover: hover) {
+  .status:hover,
+  .theme-tag.act:hover,
+  .sort:hover {
+    background-color: var(--surface);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+  }
 }
+.status[aria-expanded='true'] { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-sm); }
+.theme-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted-fg-2); flex: none; }
+.theme-tag.act { color: var(--ink); }
+
+/* Colour rides on the glyph, never on the word: the label keeps full contrast,
+   and the four shapes — ring, half, tick, slash — carry the state on their own
+   for anyone who does not see the colour. */
+.st-ico { display: inline-grid; place-items: center; flex: none; color: var(--muted-fg-2); }
+.st-ico svg { width: 14px; height: 14px; }
+.st-ico.s-progress { color: var(--st-progress); }
+.st-ico.s-done { color: var(--st-done); }
 .status-menu {
   position: absolute;
   z-index: 5;
@@ -1331,6 +1408,9 @@
   gap: 2px;
 }
 .status-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   padding: 7px 10px;
   border-radius: 6px;
@@ -1338,7 +1418,7 @@
 }
 .status-menu > button:hover { background: var(--muted); }
 .status-menu > button.on { font-weight: 600; }
-.status-menu > button.on::after { content: ' ✓'; color: var(--muted-fg); }
+.status-menu > button.on::after { content: '✓'; margin-left: auto; color: var(--muted-fg-2); }
 .menu-label {
   font-size: 11px;
   color: var(--muted-fg);
@@ -1362,7 +1442,9 @@
 .kind-ico { display: inline-grid; place-items: center; color: var(--muted-fg); }
 .kind-ico svg { width: 14px; height: 14px; }
 .kind-ico.k-bug { color: #dc2626; }
-.kind-ico.k-idea { color: #ca8a04; }
+.kind-ico.k-idea { color: #a16207; }
+.root.dark .kind-ico.k-bug { color: #f87171; }
+.root.dark .kind-ico.k-idea { color: #facc15; }
 .wont-note { display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 6px; }
 .wont-note textarea {
   font: inherit;
@@ -1708,13 +1790,21 @@
 .map-hide svg { width: 12px; height: 12px; }
 .map-node:hover .map-hide, .map-hide:focus-visible { opacity: 1; }
 
-/* ---------- visual QA fixes ---------- */
+/* ---------- header, list controls and small text ---------- */
 
-/* Popover header: the identity group must shrink before the action icons do. */
+/* Thread header: who on one line, state on the next, so neither squeezes the
+   other when a name is long or a status label is wide. */
+.popover .head { border-bottom: 0; }
+.popover .head,
+.popover .head-meta,
+.popover .compose {
+  flex: none; /* the message list is what gives way when the popover is capped */
+}
 .popover .head .who {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  gap: 7px;
 }
 .popover .head .who .name {
   min-width: 2ch;
@@ -1722,19 +1812,60 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.popover .head .who .badge,
-.popover .head .who .num {
+.popover .head .who .num,
+.popover .head .who .sep,
+.popover .head .who .role {
   flex: none;
   white-space: nowrap;
 }
-.popover .head .status { flex: none; }
+/* The side someone is on is part of the sentence "Dima · Client", not a tag. */
+.popover .head .who .sep,
+.popover .head .who .role {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-fg-2);
+}
+
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* It carries the status, the kind, the theme and the position: let it wrap
+     rather than squeeze any of them. */
+  flex-wrap: wrap;
+  row-gap: 6px;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.head-meta .nav-pos { margin-left: auto; }
+
+/* Facts that cannot be acted on stay text: kind, where the comment sits, and
+   the version it was left on (the one exception, because it is a warning). */
+.kind-tag,
+.place {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted-fg-2);
+}
+.kind-tag { flex: none; }
+.place {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Small secondary text at AA. */
-.badge, .map-edge-label, .sb-group, .status-tag, .sb-row .replies, .ver-meta, .map-countline, .preview-card .meta, .sb-note {
+.badge, .map-edge-label, .sb-group, .sb-row .replies, .ver-meta, .map-countline, .preview-card .meta, .sb-note {
   color: var(--muted-fg-2);
 }
 .map-edge-label { fill: var(--muted-fg-2); }
-.status.s-wont, .status-tag.s-wont { color: var(--muted-fg-2); }
-/* Sidebar controls: filter row, then role chips + sort on one line. */
+.num { min-width: 2.4ch; flex: none; }
+
+/* List controls: statuses, then who wrote them and in what order — two rows of
+   the same 26px control height, so the header reads as one block. */
 .sb-row2 {
   display: flex;
   align-items: center;
@@ -1742,35 +1873,6 @@
   gap: 8px;
   padding: 6px 16px 0;
 }
-.sb-row2 .chips { padding: 0; margin-right: auto; }
-.sb-row2 .sort { align-self: auto; }
-
-/* Thread header: identity on one line, state on the next, so neither squeezes
-   the other when a name is long or a status label is wide. */
-.popover .head { border-bottom: 0; }
-.popover .head,
-.popover .head-meta,
-.popover .compose {
-  flex: none; /* the message list is what gives way when the popover is capped */
-}
-.head-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* It carries the status, the version and the position now: let it wrap rather
-     than squeeze any of them. */
-  flex-wrap: wrap;
-  row-gap: 5px;
-  padding: 2px 14px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.head-meta .nav-pos { margin-left: auto; }
-.in-container {
-  font-size: 11px;
-  color: var(--muted-fg-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.sb-row2 .sort:first-child { margin-right: auto; }
 .status-seg button { padding: 5px 4px; }
 

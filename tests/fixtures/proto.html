@@ -18,6 +18,9 @@
   .split li button { display: block; width: 220px; text-align: left; padding: 8px; margin-bottom: 4px; }
   #details { width: 240px; border: 1px solid #ccc; padding: 12px; }
   section[hidden] { display: none; }
+  /* A theme the prototype switches itself — the state a comment can be left in. */
+  html[data-theme="dark"] body { background: #12151b; color: #f2f4f8; }
+  html[data-theme="dark"] header { border-bottom-color: #2a2f3a; }
 </style>
 </head>
 <body>
@@ -25,6 +28,7 @@
   <header>
     <a href="#/home">Home</a>
     <a href="#/settings">Settings</a>
+    <button id="theme">Dark</button>
   </header>
   <main>
     <section data-route="home">
@@ -101,6 +105,26 @@
   addEventListener('hashchange', () => document.getElementById('to-report')?.remove());
   document.getElementById('open-dialog').addEventListener('click', () => document.getElementById('dlg').showModal());
   document.getElementById('dlg-close').addEventListener('click', () => document.getElementById('dlg').close());
+
+  // The prototype owns its own light/dark state.
+  const theme = document.getElementById('theme');
+  theme.addEventListener('click', () => {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+    theme.textContent = dark ? 'Dark' : 'Light';
+  });
+
+  /* Two guards a real prototype plausibly has, and that the overlay has to
+     survive. Both read e.target, which shadow-DOM retargeting turns into the
+     overlay's host element — so from here, someone typing a comment looks
+     exactly like someone typing nothing. */
+  const editable = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  window.__pageKeys = [];
+  document.addEventListener('keydown', (e) => {
+    if (editable(e.target)) return;
+    window.__pageKeys.push(e.key);
+    if (e.key === 'Backspace') e.preventDefault(); // "Backspace must not navigate back"
+  });
 </script>
 </body>
 </html>

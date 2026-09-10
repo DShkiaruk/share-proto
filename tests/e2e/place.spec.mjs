@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, mouseClick, inOverlay, apiGet } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiGet, openList } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -63,7 +63,7 @@ test('a comment on another hash page: sidebar row navigates there in one click; 
 
   await page.goto('/#/home'); // same document: only the hash changes
   await page.waitForFunction(() => window.__fp?.state.screen === 'Home'); // overlay settled after the route change
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1)); // Threads
+  await openList(page);
   const row = inOverlay(page, '.sb-row').filter({ hasText: 'on settings' });
   await mouseClick(page, row);
   await expect(page).toHaveURL(/#\/settings$/);
@@ -90,15 +90,16 @@ test('numbers are global and identical for both roles; sorting and filters work'
 
   await designer.reload(); // the overlay polls every 25 s — pick up the client's thread now
   await designer.waitForSelector('[data-fp-host]');
-  await mouseClick(designer, inOverlay(designer, '.tb-btn').nth(1));
+  await openList(designer);
   await expect(inOverlay(designer, '.sb-row .num').first()).toHaveText('#3'); // newest first
-  await inOverlay(designer, 'select.sort').selectOption('oldest');
+  await inOverlay(designer, 'select[aria-label="Sort comments"]').selectOption('oldest');
   // the client's fresh thread sits in "New for you" above the list for the first minute
   await expect(inOverlay(designer, '.sb-row:not(.new) .num').first()).toHaveText('#1');
-  await mouseClick(designer, inOverlay(designer, '.chip').filter({ hasText: 'Client' }));
+  await inOverlay(designer, 'select[aria-label="Show comments from"]').selectOption('client');
   await expect(inOverlay(designer, '.sb-row')).toHaveCount(1);
   await expect(inOverlay(designer, '.pin')).toHaveCount(1);
-  await expect(inOverlay(client, '.chips')).toHaveCount(0); // no role filter for clients
+  // no audience filter for clients — they only ever see their own side
+  await expect(inOverlay(client, 'select[aria-label="Show comments from"]')).toHaveCount(0);
 });
 
 test('H hides everything and the dot brings it back; J/K walk comments', async ({ page }) => {
@@ -224,7 +225,7 @@ test('a comment with no trail learns the way back the first time someone opens i
   await expect(page.locator('#details')).toBeHidden();
 
   // Clicking it arms a watch rather than giving up.
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'made before trails' }).first());
   await expect(inOverlay(page, '.toast')).toContainText('Preview placeholder', { timeout: 10_000 });
 
@@ -242,7 +243,7 @@ test('a comment with no trail learns the way back the first time someone opens i
   await page.reload();
   await page.waitForFunction(() => Boolean(window.__fp?.state.role));
   await expect(page.locator('#details')).toBeHidden();
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'made before trails' }).first());
   await expect(page.locator('#details')).toBeVisible({ timeout: 15_000 });
 

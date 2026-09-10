@@ -58,6 +58,14 @@ SCREEN_ID=$(printf '%s' "$SCREEN" | jq_ 'print(d.get("thread",{}).get("id",""))'
 check "$(printf '%s' "$SCREEN" | jq_ 'print(d.get("thread",{}).get("anchor"), d.get("thread",{}).get("trail"))')" "None []" "a comment can be about a screen, with no anchor"
 curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$SCREEN_ID"'"}' "$D/api/comments"
 
+# The state a comment was left in: the mode, and the marks that can restore it.
+THEME='{"action":"create","text":"smoke: left in the dark","screen":"smoke","screenLabel":"smoke","theme":{"mode":"dark","marks":{"html":{"cls":["dark"],"attrs":{"data-theme":"dark"}}},"junk":1}}'
+THEME_R=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$THEME" "$D/api/comments")
+THEME_ID=$(printf '%s' "$THEME_R" | jq_ 'print(d.get("thread",{}).get("id",""))')
+check "$(printf '%s' "$THEME_R" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
+check "$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"create","text":"smoke: bad theme","screen":"smoke","screenLabel":"smoke","theme":{"mode":"neon"}}' "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
+curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$THEME_ID"'"}' "$D/api/comments"
+
 LEARN=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke: learns the way","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
   "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("id",""))')

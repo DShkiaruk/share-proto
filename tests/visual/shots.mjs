@@ -23,6 +23,13 @@ async function login(page, name, pass) {
 const api = (page, body) =>
   page.evaluate(async (b) => (await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json(), body);
 const sr = (page, sel) => page.locator(`[data-fp-host] >> ${sel}`);
+// The list stays open when a comment is opened, so "click Threads" is a toggle,
+// not an opener.
+const openList = async (page) => {
+  if (await page.evaluate(() => window.__fp?.state.sidebar)) return;
+  await click(page, sr(page, '.tb-btn').nth(1));
+  await page.waitForTimeout(450);
+};
 const click = async (page, loc) => {
   await loc.scrollIntoViewIfNeeded();
   const b = await loc.boundingBox();
@@ -42,6 +49,14 @@ const click = async (page, loc) => {
   await api(d, { action: 'status', threadId: b.thread.id, status: 'wont', note: 'Name is the product default across all lists.' });
   const c = await api(d, { action: 'create', text: 'Where does the checkbox state get saved?', screen: 'Settings', screenLabel: 'Settings', anchor: { path: 'section[data-route="settings"] > h1:nth-of-type(1)', t: 'h1', txt: 'Settings', ox: 0.5, oy: 0.5, fx: 0.1, fy: 0.15 }, page: '/#/settings', kind: 'question' });
   await api(d, { action: 'status', threadId: c.thread.id, status: 'done' });
+  // A comment left on the dark version of a screen: in the light pass its
+  // header must offer the way back, and that offer has to be readable.
+  await api(d, {
+    action: 'create',
+    text: 'Left on the dark version of this screen — the card border vanishes there.',
+    screen: 'Home', screenLabel: 'Home', anchor: anchorH1, page: '/',
+    theme: { mode: 'dark', marks: { html: { cls: [], attrs: { 'data-theme': 'dark' } } } },
+  });
   const proto = await d.evaluate(() => window.__fp.state.proto);
   await api(d, { action: 'version-label', id: proto, label: 'Sprint 12' });
   // A thread from an earlier build, by someone with a long name: the header
@@ -112,15 +127,30 @@ const CONTRAST_JS = `(() => {
     return over(acc, page);
   };
   const ratio = (a, b) => { const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x); return (l1 + .05) / (l2 + .05); };
-  const sels = ['.status', '.status-tag', '.badge', '.num', '.time', '.sys-line', '.react-chip', '.chip', '.ver-meta',
+  const sels = ['.status', '.status-label', '.badge', '.num', '.time', '.sys-line', '.react-chip', '.ver-meta',
     '.toast', '.sb-group', '.excerpt', '.replies', '.name', '.tb-label', '.kind-chip', '.goto-screen',
     '.menu-label', '.map-edge-label', '.sb-note', '.nav-pos', '.filter-chip', '.wont-note textarea', '.sort',
-    '.in-container', '.map-name', '.present-dot', '.ver-label', '.excerpt',
+    '.place', '.role', '.theme-tag', '.kind-tag', '.map-name', '.present-dot', '.ver-label', '.seg button',
     // the map's own vocabulary
     '.map-band', '.map-band-note', '.map-chip', '.map-total', '.map-ph-title', '.map-ph-note', '.map-act',
     '.start-flag', '.here-flag'];
+  // Glyphs that carry meaning on their own are graphics, not text: WCAG 1.4.11
+  // asks 3:1 of them, and nothing of a shape that only decorates a label.
+  const graphics = ['.st-ico', '.kind-ico', '.row-dot'];
   const out = [];
   const seen = new Set();
+  for (const sel of graphics) for (const el of r.querySelectorAll(sel)) {
+    if (!el.getClientRects().length) continue;
+    const cs = getComputedStyle(el);
+    const fg = parse(cs.color) || parse(cs.backgroundColor);
+    if (!fg) continue;
+    const bg = bgOf(el.parentElement || el);
+    const key = 'g' + sel + '|' + cs.color + '|' + cs.backgroundColor + '|' + JSON.stringify(bg);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const c = ratio(over(fg, bg), bg);
+    out.push({ sel, text: '(glyph)', size: 0, ratio: +c.toFixed(2), need: 3, ok: c >= 3 });
+  }
   for (const sel of sels) for (const el of r.querySelectorAll(sel)) {
     if (!el.getClientRects().length) continue;
     const cs = getComputedStyle(el);
@@ -150,10 +180,10 @@ async function shootAll(theme, device) {
   await login(page, 'Dmytro', 'team-e2e');
   const shot = (name) => page.screenshot({ path: `${OUT}${name}-${tag}.png` });
   await shot('01-toolbar');
-  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(500);
+  await openList(page); await page.waitForTimeout(200);
   await shot('02-sidebar');
   report.push({ state: `sidebar-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
-  await sr(page, 'select.sort').selectOption('oldest'); await page.waitForTimeout(200);
+  await sr(page, 'select[aria-label="Sort comments"]').selectOption('oldest'); await page.waitForTimeout(200);
   await click(page, sr(page, '.sb-row').first()); await page.waitForTimeout(700);
   await shot('03-popover');
   // Layout + theme diagnostics: truncation and theme-correct chips are the two
@@ -163,7 +193,7 @@ async function shootAll(theme, device) {
     const name = r.querySelector('.popover .who .name');
     const st = r.querySelector('.popover .status');
     const cs = st && getComputedStyle(st);
-    const clipped = [...r.querySelectorAll('.status-seg button, .popover .who .name, .sb-row .name, .map-name, .chip, .kind-chip, .in-container, .nav-pos, .status')]
+    const clipped = [...r.querySelectorAll('.status-seg button, .popover .who .name, .sb-row .name, .map-name, .kind-chip, .place, .nav-pos, .status, .theme-tag, .sb-row .time, .sort')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
     return {
@@ -176,18 +206,23 @@ async function shootAll(theme, device) {
   // The header of a thread from an earlier build carries a role badge and a
   // version badge at once — the combination that squeezed the author's name.
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(400);
+  await openList(page);
   await click(page, sr(page, '.sb-row').filter({ hasText: 'previous build' }).first()); await page.waitForTimeout(600);
   await shot('03b-popover-older-build');
   report.push({ state: `diag-older-${tag}`, rows: [], diag: await page.evaluate(() => {
     const r = document.querySelector('[data-fp-host]').shadowRoot;
-    const clipped = [...r.querySelectorAll('.popover .who .name, .popover .badge, .popover .head-meta .badge')]
+    const clipped = [...r.querySelectorAll('.popover .who .name, .popover .badge, .popover .head-meta .badge, .popover .head-meta .place')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
     return { clipped };
   }) });
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(400);
+  await openList(page);
+  await click(page, sr(page, '.sb-row').filter({ hasText: 'dark version' }).first()); await page.waitForTimeout(600);
+  await shot('03c-popover-other-theme');
+  report.push({ state: `theme-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await openList(page);
   await click(page, sr(page, '.sb-row').first()); await page.waitForTimeout(600);
 
   await click(page, sr(page, '.popover .status')); await page.waitForTimeout(300);
@@ -196,7 +231,7 @@ async function shootAll(theme, device) {
   await click(page, sr(page, '.status-menu button').filter({ hasText: 'Won’t do' })); await page.waitForTimeout(300);
   await shot('05-wont-note');
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-  await click(page, sr(page, '.tb-btn').nth(1)); await page.waitForTimeout(400);
+  await openList(page);
   if (!device) { const row = sr(page, '.sb-row').nth(1); const b = await row.boundingBox(); await page.mouse.move(b.x + 40, b.y + 10); await page.waitForTimeout(700); await shot('06-hover-card'); await page.mouse.move(5, 5); }
   else { await click(page, sr(page, '.sb-row .eye').nth(1)); await page.waitForTimeout(500); await shot('06-hover-card'); await page.mouse.click(10, 10); }
   await click(page, sr(page, '.sb-versions')); await page.waitForTimeout(600);

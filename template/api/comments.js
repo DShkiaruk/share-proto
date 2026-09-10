@@ -1,6 +1,6 @@
 import {
   clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
+  nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../lib/threads.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
@@ -153,6 +153,7 @@ export default async function handler(req, res) {
       // Never reuse a number: max over live threads AND the document's high-water mark.
       n: Math.max(nextNumber(before.threads), (before.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
+      theme: sanitizeTheme(body.theme),
       kind: KINDS.includes(body.kind) ? body.kind : null,
     };
     const img = await storeImages(tid, 'attach', body.images);

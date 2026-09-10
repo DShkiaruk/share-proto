@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { login, mouseClick, inOverlay, apiGet, apiPost } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiGet, apiPost, openList } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -154,11 +154,11 @@ test('a screen can be commented on from the map itself', async ({ page }) => {
   // No pin anywhere, and the sidebar says why.
   await page.keyboard.press('Escape');
   await expect(inOverlay(page, '.map')).toHaveCount(0);
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   const row = inOverlay(page, '.sb-row').filter({ hasText: 'this screen does not belong' });
-  await expect(row.locator('.badge').filter({ hasText: 'Screen' })).toBeVisible();
+  await expect(row.locator('.replies')).toHaveText(/About this screen/);
   await mouseClick(page, row);
-  await expect(inOverlay(page, '.popover .badge').filter({ hasText: 'About this screen' })).toBeVisible({ timeout: 15_000 });
+  await expect(inOverlay(page, '.popover .place')).toHaveText('About this screen', { timeout: 15_000 });
   const pinned = await page.evaluate(
     (n) =>
       [...document.querySelector('[data-fp-host]').shadowRoot.querySelectorAll('.pin')].some(
@@ -173,7 +173,7 @@ test('a screen can be commented on from the map itself', async ({ page }) => {
   // takes you to its own, and opens there.
   await page.goto('/#/home');
   await page.waitForFunction(() => window.__fp?.state.screen === 'Home');
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'this screen does not belong' }).first());
   await expect(page).toHaveURL(/#\/settings/, { timeout: 15_000 });
   await expect(inOverlay(page, '.popover .msg .text').filter({ hasText: 'this screen does not belong' })).toBeVisible({ timeout: 10_000 });
@@ -234,7 +234,7 @@ test('a comment whose element is gone opens where it can be read, not in the cor
   );
   expect(stranded, 'no pin over content the comment was never about').toBe(false);
 
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await mouseClick(page, inOverlay(page, '.sb-row').filter({ hasText: 'no longer exists' }).first());
   const pop = inOverlay(page, '.popover');
   await expect(pop).toBeVisible({ timeout: 15_000 });

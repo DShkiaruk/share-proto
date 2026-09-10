@@ -72,6 +72,32 @@ export function sanitizeTrail(raw) {
   return JSON.stringify(out).length > 6000 ? [] : out;
 }
 
+/* The prototype's own light/dark state when a comment was left. A screen is
+   not one picture: the same heading over a dark theme is a different thing to
+   look at, and a comment about it lands on the wrong version otherwise. We
+   keep the mode we measured plus the marks that produced it — the class
+   tokens and attributes prototypes actually use to switch themes — so the
+   state can be put back instead of only described. Untrusted → bounded. */
+export const THEME_ATTRS = ['data-theme', 'data-mode', 'data-color-scheme', 'data-appearance', 'data-bs-theme'];
+
+export function sanitizeTheme(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const mode = raw.mode === 'dark' || raw.mode === 'light' ? raw.mode : null;
+  if (!mode) return null;
+  const marks = {};
+  for (const at of ['html', 'body', 'app']) {
+    const m = raw.marks?.[at];
+    if (!m || typeof m !== 'object') continue;
+    const cls = (Array.isArray(m.cls) ? m.cls : [])
+      .filter((c) => typeof c === 'string' && c && c.length <= 40)
+      .slice(0, 4);
+    const attrs = {};
+    for (const a of THEME_ATTRS) if (typeof m.attrs?.[a] === 'string') attrs[a] = m.attrs[a].slice(0, 40);
+    if (cls.length || Object.keys(attrs).length) marks[at] = { cls, attrs };
+  }
+  return { mode, marks };
+}
+
 export function assemble(events, root = '') {
   const byThread = new Map();
   for (const { pathname, data } of events) {
@@ -154,6 +180,7 @@ export function assemble(events, root = '') {
       anchor: firstMsg.first.anchor,
       proto: firstMsg.first.proto || null,
       page: firstMsg.first.page || null,
+      theme: sanitizeTheme(firstMsg.first.theme),
       n: Number.isInteger(firstMsg.first.n) ? firstMsg.first.n : null,
       // A later `trail` state event wins: it was taught by someone who actually
       // reopened the state.

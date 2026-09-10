@@ -54,6 +54,22 @@ test('a comment is stored under its own key and comes back over GET', async () =
   assert.deepEqual(got.mapmeta, { aliases: {}, hidden: [] });
 });
 
+test('the theme a comment was left in is stored, checked and given back', async () => {
+  const r = room();
+  const res = await create(r, 'designer', 'Dee', {
+    text: 'unreadable here',
+    screenLabel: 'Home',
+    theme: { mode: 'dark', marks: { html: { cls: ['dark'], attrs: { 'data-theme': 'dark' } } } },
+  });
+  assert.equal(res.payload.thread.theme.mode, 'dark');
+  const got = await r.get('designer', 'Dee');
+  assert.deepEqual(got.threads[0].theme.marks.html.attrs, { 'data-theme': 'dark' });
+
+  // Junk from a hostile client is dropped, not stored.
+  const bad = await create(r, 'designer', 'Dee', { text: 'x', theme: { mode: 'neon', marks: 'oops' } });
+  assert.equal(bad.payload.thread.theme, null);
+});
+
 test('numbers are never reused after a delete', async () => {
   const r = room();
   const ids = [];
@@ -194,6 +210,7 @@ test('a room written by the v1 worker keeps its comments and gains v2 fields', a
   assert.equal(got.threads[0].messages[0].text, 'old comment');
   assert.equal(got.threads[0].n, 1, 'legacy threads get a number');
   assert.equal(got.threads[0].status, 'done', 'resolved becomes a status');
+  assert.equal(got.threads[0].theme, null, 'a comment from before themes were recorded has none');
   assert.deepEqual(got.nav, { 'Home>Settings': { path: 'a' } });
   assert.equal(s.map.has('nav'), false, 'the old single-key nav is gone');
   assert.ok(s.map.has('n:Home>Settings'), 'edges are one key each now');

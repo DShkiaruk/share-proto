@@ -5,11 +5,15 @@ import { defineConfig } from '@playwright/test';
 // asserted by an earlier spec are not disturbed by a later one.
 const local = { baseURL: 'http://localhost:4173', viewport: { width: 1280, height: 800 } };
 const projects = [
-  { name: 'local-place', testMatch: /place\.spec\.mjs/, use: local },
+  // Keys first: it leaves no threads behind, so the counts the rest assert hold.
+  { name: 'local-keys', testMatch: /keys\.spec\.mjs/, use: local },
+  { name: 'local-place', testMatch: /place\.spec\.mjs/, use: local, dependencies: ['local-keys'] },
   { name: 'local-media', testMatch: /media\.spec\.mjs/, use: local, dependencies: ['local-place'] },
   { name: 'local-workflow', testMatch: /workflow\.spec\.mjs/, use: local, dependencies: ['local-media'] },
   { name: 'local-map', testMatch: /map\.spec\.mjs/, use: local, dependencies: ['local-workflow'] },
   { name: 'local-embed', testMatch: /embed\.spec\.mjs/, use: local, dependencies: ['local-map'] },
+  // Last: it leaves two comments behind, so no earlier count is disturbed.
+  { name: 'local-theme', testMatch: /theme\.spec\.mjs/, use: local, dependencies: ['local-embed'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({

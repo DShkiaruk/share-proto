@@ -60,3 +60,12 @@ export async function settledBox(locator, tries = 20) {
   if (!last) throw new Error('element never appeared');
   return last;
 }
+
+// Open the comment list. The Threads button is a toggle and the list now
+// survives opening a comment, so "click it" is not the same as "open it".
+export async function openList(page) {
+  if (await page.evaluate(() => window.__fp?.state.sidebar)) return;
+  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await page.waitForFunction(() => window.__fp?.state.sidebar === true);
+  await settledBox(inOverlay(page, '.sidebar'));
+}

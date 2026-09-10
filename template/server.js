@@ -30,7 +30,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
+const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 
@@ -310,6 +310,7 @@ async function apiComments(req, res, session) {
       page: sanitizePage(body.page),
       n: Math.max(nextNumber(S.threads), (S.maxN || 0) + 1),
       trail: sanitizeTrail(body.trail),
+      theme: sanitizeTheme(body.theme),
       kind: KINDS.includes(body.kind) ? body.kind : null,
       status: 'open',
       history: [],

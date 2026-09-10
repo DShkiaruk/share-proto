@@ -71,3 +71,58 @@ servers.
 ## v1 — 2026-07-03
 
 Password-protected prototype sharing with pins, threads, replies, resolve, unread dots, learned "Go to comment" navigation, auto dark theme, mobile support.
+
+## v2.2 — 2026-09-10
+
+Five things reported from a live review, and the pass over the comment list they
+turned out to be one symptom of.
+
+### The prototype's own state
+- A comment records the **theme it was left in** — the mode we measure, plus the
+  class tokens and data attributes that produced it. When the prototype is in
+  the other state its header says so, and (for the two mechanisms prototypes
+  actually use — a class, a `data-theme`-style attribute) offers to switch back,
+  verifies that the colour really changed, and undoes itself if it did not.
+- `detectTheme()` no longer keeps a stale answer when nothing on the page paints
+  an opaque background: a prototype that goes light by *removing* a class used to
+  leave a dark comment panel over a white page.
+- The overlay watches `<html>` too. `html.dark` is where most prototypes keep the
+  theme, and it sits outside the subtree we were observing.
+
+### Keys typed into the overlay stay in the overlay
+- Every key event that starts in one of our own fields is stopped at the shadow
+  host. Two things were wrong without it: the prototype's shortcuts fired while
+  someone wrote a comment (on a Ukrainian layout "с" is the physical C key —
+  our own shortcut), and a page that guards a key outside its inputs
+  ("Backspace must not navigate back") saw only our host element, decided nobody
+  was typing, and cancelled the keystroke. That is why **Backspace stopped
+  deleting text**. `tests/e2e/keys.spec.mjs` reproduces both against a fixture
+  that carries the guard.
+
+### The comment list, rebuilt around what a row is for
+Researched against five annotation tools (Figma, Air, Framer, Ditto, Sketch) and
+three inbox lists (Linear, Intercom, Upwork) before touching anything.
+- A row is three lines: who and when (quiet), the comment itself (the only
+  ink-coloured text), where it lives (quiet). The comment used to be the
+  smallest, greyest thing in the row.
+- The **time sits in its own column on the right edge** and no longer moves with
+  the tags before it. The unread dot moved to the left gutter for the same
+  reason.
+- Status is a **glyph, not a word**, and only when it is not "Open" — four
+  distinct shapes (ring, half, tick, slash) so the state survives colour
+  blindness. Role left the row entirely: a client's avatar wears a ring, and the
+  filter above the list still says the words.
+- Audience and sort are one control shape instead of a row of pills next to a
+  native `<select>`.
+- The **status control looks like a control**: glyph, label, chevron, hover and
+  open states. "Open" as bare text was read as decoration, and was.
+- In a thread header, facts that cannot be acted on are one muted sentence, not
+  a badge each. The only badge left is "Older version", which is a warning.
+- The list stays open when you open a comment (Figma, Air and Framer all do),
+  and the popover keeps clear of it.
+
+### Also
+- A hover preview no longer covers the thread it belongs to.
+- Sidebar empty states name the filter you are actually looking at.
+- New: `theme` on a comment (all three servers, one shared sanitiser), covered by
+  `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.

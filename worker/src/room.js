@@ -16,7 +16,7 @@
    caps key+value at 2 MB, and an image is capped at 1.5 MB by lib/media.js. */
 
 import {
-  clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage,
+  clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme,
   applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../../template/lib/threads.js';
 import { applyShot, applyMapMeta, applyVersionEvent, labelKey } from '../../template/lib/state.js';
@@ -90,6 +90,7 @@ export class Room {
       kind: t.kind ?? null,
       page: t.page ?? null,
       trail: t.trail || [],
+      theme: t.theme ?? null,
       preview: t.preview ?? null,
     }));
     for (const [i, t] of upgraded.entries()) {
@@ -272,6 +273,7 @@ export class Room {
         // Never reuse a number: max over live threads AND the high-water mark.
         n: Math.max(nextNumber(this.threads), (this.meta.maxN || 0) + 1),
         trail: sanitizeTrail(body.trail),
+        theme: sanitizeTheme(body.theme),
         kind: KINDS.includes(body.kind) ? body.kind : null,
         status: 'open',
         history: [],

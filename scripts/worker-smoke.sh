@@ -119,6 +119,11 @@ check "$(code -H "Authorization: Bearer $TEAM_T" "$D/api/file?p=$SPATH&room=pr-7
 SCREEN_C=$(api "$TEAM_T" -d '{"action":"create","text":"about the screen","screen":"Home","screenLabel":"Home"}' "$D/api/comments?room=pr-7")
 check "$(printf '%s' "$SCREEN_C" | jq_ 'print(d.get("thread",{}).get("anchor"), d.get("thread",{}).get("trail"))')" "None []" "a comment can be about a screen, with no anchor"
 
+# The state a comment was left in: the mode, and the marks that can restore it.
+THEME='{"action":"create","text":"left in the dark","screen":"Home","screenLabel":"Home","theme":{"mode":"dark","marks":{"html":{"cls":["dark"],"attrs":{"data-theme":"dark"}}},"junk":1}}'
+check "$(api "$TEAM_T" -d "$THEME" "$D/api/comments?room=pr-7" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
+check "$(api "$TEAM_T" -d '{"action":"create","text":"bad theme","screen":"Home","screenLabel":"Home","theme":{"mode":"neon"}}' "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
+
 # A comment learns the way back to its state, once.
 LEARN=$(api "$TEAM_T" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
 TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#row","t":"button","txt":"Acme"},"txt":"Acme"}]}'

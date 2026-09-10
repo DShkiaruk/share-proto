@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
-  assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage,
+  assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage, sanitizeTheme,
   applyStatus, applyKind, applyReact, applyTrail,
 } from '../../template/lib/threads.js';
 
@@ -256,4 +256,49 @@ test('applyTrail replaces only the named thread and sanitizes', () => {
   assert.equal(next[0].trail.length, 1);
   assert.equal(next[0].trail[0].txt, 'new');
   assert.deepEqual(next[1].trail, threads[1].trail);
+});
+
+test('sanitizeTheme keeps a restorable mark set and refuses everything else', () => {
+  const ok = sanitizeTheme({
+    mode: 'dark',
+    marks: {
+      html: { cls: ['dark'], attrs: { 'data-theme': 'dark', 'data-nope': 'x' } },
+      body: { cls: [], attrs: {} }, // nothing to restore → not carried
+      evil: { cls: ['a'], attrs: {} }, // only the three known nodes exist
+    },
+  });
+  assert.equal(ok.mode, 'dark');
+  assert.deepEqual(Object.keys(ok.marks), ['html']);
+  assert.deepEqual(ok.marks.html.cls, ['dark']);
+  assert.deepEqual(ok.marks.html.attrs, { 'data-theme': 'dark' });
+
+  // Mode is the whole point: without a known one there is nothing to compare.
+  assert.equal(sanitizeTheme({ mode: 'sepia', marks: {} }), null);
+  assert.equal(sanitizeTheme(null), null);
+  assert.equal(sanitizeTheme('dark'), null);
+  // A mode with no marks is still worth keeping: it can be said, just not undone.
+  assert.deepEqual(sanitizeTheme({ mode: 'light' }), { mode: 'light', marks: {} });
+  // Bounded: four class tokens, 40 characters each.
+  const big = sanitizeTheme({
+    mode: 'dark',
+    marks: { html: { cls: ['a', 'b', 'c', 'd', 'e'], attrs: { 'data-theme': 'x'.repeat(80) } } },
+  });
+  assert.equal(big.marks.html.cls.length, 4);
+  assert.equal(big.marks.html.attrs['data-theme'].length, 40);
+});
+
+test('assemble carries the theme a comment was left in', () => {
+  const T3 = '33333333-3333-4333-8333-333333333333';
+  const withTheme = ev(T3, 9, {
+    type: 'msg', at: 9, author: 'Bo', role: 'designer', text: 'x',
+    first: {
+      authorRole: 'designer', screen: 'S', screenLabel: 'Home', anchor: null,
+      theme: { mode: 'dark', marks: { html: { cls: ['dark'], attrs: {} } } },
+    },
+  });
+  const [t] = assemble([withTheme]);
+  assert.equal(t.theme.mode, 'dark');
+  assert.deepEqual(t.theme.marks.html.cls, ['dark']);
+  // A thread from before this existed simply has none.
+  assert.equal(assemble([first(T, 1)])[0].theme, null);
 });

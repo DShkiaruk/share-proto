@@ -87,6 +87,19 @@
     grip: svg(
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
+    chevron: svg('<path d="m6 9 6 6 6-6"/>'),
+    moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+    sun: svg(
+      '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
+    ),
+    // One family, four shapes: the state reads without colour (Linear's rule,
+    // and the only way a colour-blind reviewer can tell "done" from "won't do").
+    'st-open': svg('<circle cx="12" cy="12" r="9"/>'),
+    'st-progress': svg(
+      '<circle cx="12" cy="12" r="9"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/>'
+    ),
+    'st-done': svg('<circle cx="12" cy="12" r="9"/><path d="m8.5 12.2 2.4 2.4 4.6-5.2"/>'),
+    'st-wont': svg('<circle cx="12" cy="12" r="9"/><path d="m8.8 15.2 6.4-6.4"/>'),
   };
 
   const state = {
@@ -100,7 +113,7 @@
     mode: false,
     sidebar: false,
     pinsHidden: localStorage.getItem('fp_pins_hidden') === '1',
-    filter: 'open',
+    theme: 'light', // the prototype's own light/dark state, as measured
     draft: null, // {x, y, anchor}
     active: null, // open thread id
     pendingJump: null, // thread id we're guiding the user to
@@ -138,7 +151,23 @@
     const k = el('span', `kind-ico k-${t.kind}`);
     k.append(icon(KIND_ICON[t.kind]));
     k.title = KIND_LABEL[t.kind];
+    k.setAttribute('aria-label', KIND_LABEL[t.kind]);
     return k;
+  }
+  // Lists carry the glyph alone; only a state worth reacting to gets one, so an
+  // untouched comment stays quiet. The detail view spells the word out.
+  function stGlyph(st) {
+    const s = el('span', `st-ico s-${st}`);
+    s.append(icon(`st-${st}`));
+    return s;
+  }
+  function statusIcon(t) {
+    const st = statusOf(t);
+    if (st === 'open') return null;
+    const s = stGlyph(st);
+    s.title = STATUS_LABEL[st];
+    s.setAttribute('aria-label', STATUS_LABEL[st]);
+    return s;
   }
   // "New since my last visit" — per browser, like read state.
   function isNew(t) {
@@ -181,9 +210,19 @@
     return PASTELS[h % PASTELS.length];
   }
 
-  function avatar(name, size) {
-    const a = el('span', `avatar s${size}`, (name || '?').trim().charAt(0).toUpperCase());
+  /* The avatar carries the side someone is on. A "Client" / "Team" word on
+     every row was the biggest single source of noise in the list — and it was
+     the same word nine rows out of ten. A ring says it once, per person, and
+     the filter above the list still names both sides in words. */
+  function avatar(name, size, role) {
+    const a = el('span', `avatar s${size}` + (role ? ` r-${role === 'client' ? 'client' : 'team'}` : ''));
+    a.textContent = (name || '?').trim().charAt(0).toUpperCase();
     a.style.background = pastel(name || '?');
+    if (role) {
+      const side = role === 'client' ? 'Client' : 'Team';
+      a.title = `${name || 'Someone'} · ${side}`;
+      a.setAttribute('aria-label', `${name || 'Someone'}, ${side}`);
+    }
     return a;
   }
 
@@ -228,6 +267,23 @@
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`;
     return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // List rows keep the time in a fixed column on the right edge, so it has to
+  // stay short and to stay the same width from row to row.
+  function timeShort(ts) {
+    const s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 60) return 'now';
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function timeCell(ts, cls = 'time') {
+    const t = el('span', cls, timeShort(ts));
+    t.title = new Date(ts).toLocaleString();
+    return t;
   }
 
   /* ---------- shadow root ---------- */
@@ -292,11 +348,90 @@
       }
       node = node.parentElement;
     }
-    if (!bg) return;
-    const m = bg.match(/(\d+)[, ]+(\d+)[, ]+(\d+)/);
-    if (!m) return;
-    const lum = 0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3];
-    root.classList.toggle('dark', lum < 128);
+    // Nothing opaque anywhere means the browser's own canvas is showing. That
+    // is a real answer, not a missing one: returning early here left the
+    // overlay in the theme it measured last, so a prototype that goes light by
+    // *removing* a class kept a dark comment panel over a white page.
+    const m = bg && bg.match(/(\d+)[, ]+(\d+)[, ]+(\d+)/);
+    let dark;
+    if (m) dark = 0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3] < 128;
+    else {
+      const cs = getComputedStyle(document.documentElement).colorScheme || '';
+      dark = /\bdark\b/.test(cs) && (!/\blight\b/.test(cs) || matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    state.theme = dark ? 'dark' : 'light';
+    root.classList.toggle('dark', dark);
+  }
+
+  /* ---------- the prototype's own light/dark state ---------- */
+
+  /* A comment belongs to a screen *in a state*, and the theme is the state
+     people switch most. Recording only "it was dark" would leave the reviewer
+     to find the toggle; recording the marks that made it dark lets us put the
+     prototype back. These are the two mechanisms prototypes actually use — a
+     class token, or a data attribute — on the three nodes that carry them. */
+  const THEME_ATTRS = ['data-theme', 'data-mode', 'data-color-scheme', 'data-appearance', 'data-bs-theme'];
+  const isThemeClass = (c) => /^(dark|light)(-mode)?$/i.test(c) || /^(theme|mode|color-scheme)-/i.test(c);
+
+  function themeNodes() {
+    const seen = new Set();
+    const out = {};
+    for (const [at, node] of [['html', document.documentElement], ['body', document.body], ['app', appRoot()]]) {
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      out[at] = node;
+    }
+    return out;
+  }
+
+  function readTheme() {
+    const marks = {};
+    for (const [at, node] of Object.entries(themeNodes())) {
+      const cls = [...node.classList].filter(isThemeClass).slice(0, 4);
+      const attrs = {};
+      for (const a of THEME_ATTRS) if (node.hasAttribute(a)) attrs[a] = node.getAttribute(a).slice(0, 40);
+      if (cls.length || Object.keys(attrs).length) marks[at] = { cls, attrs };
+    }
+    return { mode: state.theme, marks };
+  }
+
+  const canRestoreTheme = (theme) => Boolean(theme && Object.keys(theme.marks || {}).length);
+
+  // Put the marks back, then check that the prototype actually changed colour.
+  // If it did not, this theme is driven by something we cannot reach (inline
+  // styles, a stylesheet swap): undo, and let the preview picture do the work.
+  async function restoreTheme(theme) {
+    if (!canRestoreTheme(theme)) return false;
+    const nodes = themeNodes();
+    const undo = [];
+    for (const [at, mark] of Object.entries(theme.marks)) {
+      const node = nodes[at];
+      if (!node) continue;
+      undo.push({
+        node,
+        cls: [...node.classList].filter(isThemeClass),
+        attrs: THEME_ATTRS.map((a) => [a, node.getAttribute(a)]),
+      });
+      for (const c of [...node.classList]) if (isThemeClass(c)) node.classList.remove(c);
+      for (const c of mark.cls) node.classList.add(c);
+      for (const a of THEME_ATTRS) {
+        if (a in mark.attrs) node.setAttribute(a, mark.attrs[a]);
+        else node.removeAttribute(a);
+      }
+    }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    detectTheme();
+    if (state.theme === theme.mode) return true;
+    for (const u of undo) {
+      for (const c of [...u.node.classList]) if (isThemeClass(c)) u.node.classList.remove(c);
+      for (const c of u.cls) u.node.classList.add(c);
+      for (const [a, v] of u.attrs) {
+        if (v === null) u.node.removeAttribute(a);
+        else u.node.setAttribute(a, v);
+      }
+    }
+    detectTheme();
+    return false;
   }
 
   // Screen identity, in order of trust: an explicit [data-screen] tag on the
@@ -1233,11 +1368,15 @@
     // `100vw` term does not, which used to let a right-edge popover overhang.
     const vw = Math.min(document.documentElement.clientWidth || innerWidth, window.visualViewport ? window.visualViewport.width : innerWidth);
     const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
-    const w = Math.min(340, vw - 24);
+    // The list stays open on a wide screen, so the right edge it may use is
+    // not the window's — a popover placed under the panel is a popover nobody
+    // can read.
+    const right = state.sidebar ? Math.max(320, vw - sidebar.offsetWidth) : vw;
+    const w = Math.min(340, right - 24);
     const h = Math.min(popover.offsetHeight || 200, vh - 24);
     let px = x + 20;
     let py = y - 8;
-    if (px + w > vw - 12) px = Math.max(12, x - w - 20);
+    if (px + w > right - 12) px = Math.max(12, x - w - 20);
     if (px < 12) px = 12;
     if (py + h > vh - 12) py = Math.max(12, vh - h - 12);
     if (py < 12) py = 12;
@@ -1376,6 +1515,7 @@
             proto: state.proto,
             page: currentPage(),
             trail: state.draft.trail,
+            theme: readTheme(),
             kind: state.draft.kind || null,
             images: images(),
           });
@@ -1451,7 +1591,8 @@
     statusMenu.setAttribute('role', 'menu');
     const options = state.role === 'designer' ? ['open', 'progress', 'done', 'wont'] : ['open', 'done'];
     for (const st of options) {
-      const b = el('button', `s-${st}` + (statusOf(t) === st ? ' on' : ''), STATUS_LABEL[st]);
+      const b = el('button', `s-${st}` + (statusOf(t) === st ? ' on' : ''));
+      b.append(stGlyph(st), el('span', null, STATUS_LABEL[st]));
       b.setAttribute('role', 'menuitem');
       b.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1563,6 +1704,35 @@
     return row;
   }
 
+  /* "Comment 22 is about the dark version of this screen" used to be something
+     only the author knew. When the prototype is now in the other state, say so
+     — and, when the theme is switched by a class or a data attribute (which is
+     how prototypes do it), offer to put it back rather than leaving the
+     reviewer to hunt for the toggle. */
+  function themeControl(t) {
+    const th = t.theme;
+    if (!th || !th.mode || th.mode === state.theme) return document.createDocumentFragment();
+    const label = `Left in ${th.mode} mode`;
+    const glyph = th.mode === 'dark' ? 'moon' : 'sun';
+    if (!canRestoreTheme(th)) {
+      const tag = el('span', 'theme-tag');
+      tag.append(icon(glyph), el('span', null, label));
+      tag.title = `${label}. The picture above shows how it looked.`;
+      return tag;
+    }
+    const b = el('button', 'theme-tag act');
+    b.append(icon(glyph), el('span', null, label));
+    b.title = `${label} — switch the prototype back to it`;
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      const ok = await restoreTheme(th);
+      if (!ok) toast('This prototype switches its theme some other way — the picture shows how it looked', 5000);
+      if (state.active === t.id) openThread(t.id, pinEls.get(t.id) || null);
+    });
+    return b;
+  }
+
   function openThread(id, pinEl) {
     closeStatusMenu();
     closePopover();
@@ -1570,6 +1740,7 @@
     if (!t) return;
     state.active = id;
     pinEl?.classList.add('active');
+    hidePreviewCard();
 
     popover = el('div', 'popover');
     popover.setAttribute('role', 'dialog');
@@ -1577,11 +1748,14 @@
 
     const head = el('div', 'head');
     const who = el('div', 'who');
-    const ki = kindIcon(t);
-    if (ki) who.appendChild(ki);
-    who.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
+    who.append(
+      el('span', 'num', numLabel(t)),
+      avatar(t.author, 24, t.authorRole),
+      el('span', 'name', t.author)
+    );
     const rb = roleBadge(t);
-    if (rb) who.appendChild(el('span', 'badge', rb));
+    // Who they are is one sentence, not a row of tags.
+    if (rb) who.append(el('span', 'sep', '·'), el('span', 'role', rb));
     head.appendChild(who);
 
     const linkBtn = el('button', 'icon-btn');
@@ -1599,26 +1773,43 @@
     });
     head.appendChild(linkBtn);
 
+    /* The state row. One control for the one thing that changes (status), one
+       for the one that can be put back (the theme it was left in), and the
+       rest as plain muted text — a badge for every fact was what made this
+       header unreadable. */
     const meta = el('div', 'head-meta');
-    const statusBtn = el('button', `status s-${statusOf(t)}`, STATUS_LABEL[statusOf(t)]);
+    const st = statusOf(t);
+    const statusBtn = el('button', `status s-${st}`);
+    const chev = el('span', 'chev');
+    chev.append(icon('chevron'));
+    statusBtn.append(stGlyph(st), el('span', 'status-label', STATUS_LABEL[st]), chev);
     statusBtn.title = 'Change status';
-    statusBtn.setAttribute('aria-label', `Status: ${STATUS_LABEL[statusOf(t)]} — change`);
+    statusBtn.setAttribute('aria-haspopup', 'menu');
+    statusBtn.setAttribute('aria-label', `Status: ${STATUS_LABEL[st]} — change`);
     statusBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleStatusMenu(t, statusBtn);
     });
     meta.appendChild(statusBtn);
-    // The state row, not the identity row: two long badges beside the name left
-    // it as "D..".
-    if (!t.anchor) meta.appendChild(el('span', 'badge', 'About this screen'));
+    if (t.kind && KIND_LABEL[t.kind]) {
+      const k = el('span', 'kind-tag');
+      k.append(kindIcon(t), el('span', null, KIND_LABEL[t.kind]));
+      meta.appendChild(k);
+    }
+    meta.appendChild(themeControl(t));
     if (t.proto && state.proto && t.proto !== state.proto) {
       const v = state.versions.find((x) => x.id === t.proto);
       meta.appendChild(el('span', 'badge old-version', v?.label ? `Older version · ${v.label}` : 'Older version'));
     }
-    if (t.anchor?.container?.name) meta.appendChild(el('span', 'in-container', `in: ${t.anchor.container.name}`));
+    const place = !t.anchor ? 'About this screen' : t.anchor.container?.name ? `in ${t.anchor.container.name}` : '';
+    if (place) meta.appendChild(el('span', 'place', place));
     const ordered = threadsInView().slice().sort((a, b) => (a.n || 0) - (b.n || 0));
     const at = ordered.findIndex((x) => x.id === t.id);
-    if (at >= 0) meta.appendChild(el('span', 'nav-pos', `${at + 1} of ${ordered.length}`));
+    if (at >= 0) {
+      const pos = el('span', 'nav-pos', `${at + 1} of ${ordered.length}`);
+      pos.title = 'Step through comments with J and K';
+      meta.appendChild(pos);
+    }
 
     const canDelete = state.role === 'designer' || (t.authorRole === state.role && t.author === myLabel());
     if (canDelete) {
@@ -1693,7 +1884,7 @@
       const box = el('div', 'msg');
       const meta = el('div', 'meta');
       meta.append(
-        avatar(m.author, 20),
+        avatar(m.author, 20, m.role === 'client' ? 'client' : 'designer'),
         el('span', 'name', m.author),
         el('span', 'time', timeAgo(m.at) + (m.edited ? ' · edited' : ''))
       );
@@ -2042,7 +2233,10 @@
     const my = ++trip;
     if (state.presenting) togglePresent();
     if (state.pinsHidden) setPinsHidden(false);
-    setSidebar(false);
+    // Keep the list up where there is room for both: walking a review means
+    // going back to it after every comment, and every tool that does this well
+    // (Figma, Air, Framer) leaves the panel where it was.
+    if (innerWidth < 900) setSidebar(false);
     const { path, hash } = splitPage(t.page || location.pathname);
     if ((path || '/') !== location.pathname) {
       // Another document: the deep-link boot on that page finishes the trip.
@@ -2281,6 +2475,9 @@
   }
   function showPreviewCard(t, row) {
     hidePreviewCard();
+    // The thread that is already open needs no preview of itself — and the card
+    // would land on top of the popover showing it.
+    if (state.active === t.id) return;
     hoverCard = el('div', 'preview-card');
     if (t.preview) {
       const im = el('img');
@@ -2296,7 +2493,15 @@
     }
     const body = el('div', 'body');
     body.append(
-      el('div', 'meta', [numLabel(t), t.author, t.resolved ? 'Resolved' : 'Open'].filter(Boolean).join(' · ')),
+      // Same sentence as the row it belongs to: number, who, state worth
+      // naming, when. "Open" on every card was a word that carried nothing.
+      el(
+        'div',
+        'meta',
+        [numLabel(t), t.author, statusOf(t) === 'open' ? '' : STATUS_LABEL[statusOf(t)], timeShort(lastAt(t))]
+          .filter(Boolean)
+          .join(' · ')
+      ),
       el('div', 'text', t.messages[0]?.text || '')
     );
     hoverCard.appendChild(body);
@@ -2430,38 +2635,53 @@
       });
       seg.appendChild(b);
     }
-    const sort = el('select', 'sort');
-    sort.setAttribute('aria-label', 'Sort comments');
-    for (const [v, label] of [['newest', 'Newest'], ['oldest', 'Oldest'], ['unread', 'Unread first'], ['screen', 'By screen']]) {
-      const o = el('option', null, label);
-      o.value = v;
-      o.selected = state.sort === v;
-      sort.appendChild(o);
-    }
-    sort.addEventListener('change', () => {
-      state.sort = sort.value;
-      localStorage.setItem('fp_sort', state.sort);
-      renderSidebar();
-    });
+    // One picker shape for both remaining questions — who wrote it, in what
+    // order. A second row of pill buttons under the segmented control was two
+    // filter languages stacked on top of each other.
+    const picker = (label, options, current, onPick) => {
+      const sel = el('select', 'sort');
+      sel.setAttribute('aria-label', label);
+      sel.title = label;
+      for (const [v, text] of options) {
+        const o = el('option', null, text);
+        o.value = v;
+        o.selected = current === v;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => onPick(sel.value));
+      return sel;
+    };
     controls.append(seg);
     sidebar.appendChild(controls);
     const row2 = el('div', 'sb-row2');
     sidebar.appendChild(row2);
 
     if (state.role === 'designer') {
-      const chips = el('div', 'chips');
-      for (const [v, label] of [['all', 'All'], ['client', 'Client'], ['team', 'Team']]) {
-        const c = el('button', 'chip' + (state.roleFilter === v ? ' on' : ''), label);
-        c.addEventListener('click', () => {
-          state.roleFilter = v;
-          renderSidebar();
-          renderPins();
-        });
-        chips.appendChild(c);
-      }
-      row2.appendChild(chips);
+      row2.appendChild(
+        picker(
+          'Show comments from',
+          [['all', 'Everyone'], ['client', 'From client'], ['team', 'From team']],
+          state.roleFilter,
+          (v) => {
+            state.roleFilter = v;
+            renderSidebar();
+            renderPins();
+          }
+        )
+      );
     }
-    row2.appendChild(sort);
+    row2.appendChild(
+      picker(
+        'Sort comments',
+        [['newest', 'Newest'], ['oldest', 'Oldest'], ['unread', 'Unread first'], ['screen', 'By screen']],
+        state.sort,
+        (v) => {
+          state.sort = v;
+          localStorage.setItem('fp_sort', state.sort);
+          renderSidebar();
+        }
+      )
+    );
 
     const list = el('div', 'sb-list');
     if (state.versionFilter) {
@@ -2486,28 +2706,33 @@
       if (!items.length) return;
       if (label) list.appendChild(el('div', 'sb-group', label));
       for (const t of sortThreads(items)) {
+        /* Row anatomy: who and when on a quiet first line, the comment itself
+           as the only dark text, and where it lives underneath. Everything
+           that used to be a tag on line one — role, status word, "Screen" —
+           either moved into a glyph or into that last line, so the right edge
+           can hold one thing only: the time, in its own column. */
         const row = el('button', 'sb-row' + (t.resolved ? ' resolved' : '') + (isUnread(t) ? ' unread' : '') + (isNew(t) ? ' new' : ''));
         const meta = el('div', 'meta');
+        meta.append(
+          el('span', 'num', numLabel(t)),
+          avatar(t.author, 20, t.authorRole),
+          el('span', 'name', t.author)
+        );
+        const trail = el('span', 'row-trail');
         const ki = kindIcon(t);
-        if (ki) meta.appendChild(ki);
-        meta.append(el('span', 'num', numLabel(t)), avatar(t.author, 24), el('span', 'name', t.author));
-        const st = statusOf(t);
-        if (st !== 'open') meta.appendChild(el('span', `status-tag s-${st}`, STATUS_LABEL[st]));
-        const rb = roleBadge(t);
-        if (rb) meta.appendChild(el('span', 'badge', rb));
-        if (!t.anchor) meta.appendChild(el('span', 'badge', 'Screen'));
-        if (t.resolved) {
-          const c = el('span', 'check-ico');
-          c.append(icon('check'));
-          meta.appendChild(c);
-        }
-        meta.appendChild(el('span', 'time', timeAgo(lastAt(t))));
-        if (isUnread(t)) meta.appendChild(el('span', 'row-dot'));
+        if (ki) trail.appendChild(ki);
+        const si = statusIcon(t);
+        if (si) trail.appendChild(si);
+        meta.append(trail, timeCell(lastAt(t)));
+        if (isUnread(t)) row.appendChild(el('span', 'row-dot'));
         row.appendChild(meta);
         row.appendChild(el('div', 'excerpt', t.messages[0]?.text || ''));
         const extras = [];
+        // Where it lives — unless the group header overhead already says so.
+        if (!onThisScreen(t) && t.screenLabel && state.sort !== 'screen') extras.push(t.screenLabel.split(' · ')[0]);
+        if (!t.anchor) extras.push('About this screen');
+        else if (t.anchor.container?.name) extras.push(`in ${t.anchor.container.name}`);
         if (t.messages.length > 1) extras.push(`${t.messages.length - 1} ${t.messages.length === 2 ? 'reply' : 'replies'}`);
-        if (t.anchor?.container?.name) extras.push(`in: ${t.anchor.container.name}`);
         if (extras.length) row.appendChild(el('div', 'replies', extras.join(' · ')));
         row.addEventListener('click', () => goTo(t));
         // Desktop: hover shows the preview card; touch: an eye button does.
@@ -2538,7 +2763,7 @@
         eye.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ') toggleCard(e);
         });
-        meta.appendChild(eye);
+        trail.appendChild(eye);
         list.appendChild(row);
       }
     };
@@ -2565,11 +2790,11 @@
         el(
           'div',
           'sb-empty',
-          state.filter === 'open'
+          state.filter === 'active'
             ? matchMedia('(pointer: coarse)').matches
-              ? 'No open comments yet. Tap Comment, then tap anywhere on the prototype to leave the first one.'
-              : 'No open comments yet. Press C, then click anywhere on the prototype to leave the first one.'
-            : 'Nothing resolved yet.'
+              ? 'Nothing open here. Tap Comment, then tap anywhere on the prototype to leave the first one.'
+              : 'Nothing open here. Press C, then click anywhere on the prototype to leave the first one.'
+            : `Nothing ${{ progress: 'in progress', done: 'done', wont: 'marked won\u2019t do' }[state.filter] || 'here'} yet.`
         )
       );
     }
@@ -3043,6 +3268,7 @@
                 screenLabel: n.label,
                 anchor: null, // about the screen, not a spot on it
                 proto: state.proto,
+                theme: readTheme(),
                 kind: null,
                 images: box.images(),
               });
@@ -3274,21 +3500,45 @@
     goTo(list[i]);
   }
 
+  // Escape closes the topmost thing the overlay has open.
+  function closeTopLayer() {
+    if (lightbox) closeLightbox();
+    else if (mapCompose) closeMapCompose();
+    else if (state.map) closeMap();
+    else if (statusMenu) closeStatusMenu();
+    else if (state.draft) cancelDraft();
+    else if (popover) closePopover();
+    else if (state.pendingJump) cancelJump();
+    else if (state.mode) setMode(false);
+    else if (state.sidebar) setSidebar(false);
+  }
+
+  const isEditable = (node) =>
+    node instanceof HTMLElement &&
+    (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable);
+
+  /* Keys typed into the overlay's own fields belong to the overlay, and the
+     prototype underneath must never see them. Two things went wrong without
+     this: the prototype's own shortcuts fired while someone wrote a comment
+     (on a Cyrillic layout "с" is the physical C key — the comment tool's own
+     shortcut), and a page that guards a key outside its inputs ("Backspace
+     must not navigate back") sees only our shadow host, decides nobody is
+     typing, and cancels the keystroke — so Backspace stopped deleting text.
+     Shadow-DOM retargeting makes that guard impossible for the page to get
+     right, so the isolation has to happen here. */
+  for (const type of ['keydown', 'keyup', 'keypress']) {
+    host.addEventListener(type, (e) => {
+      if (!isEditable(e.composedPath()[0])) return;
+      // Escape still belongs to the overlay: handle it before sealing the event.
+      if (type === 'keydown' && e.key === 'Escape' && !e.defaultPrevented) closeTopLayer();
+      e.stopPropagation();
+    });
+  }
+
   document.addEventListener('keydown', (e) => {
-    const target = e.composedPath()[0];
-    const typing =
-      target instanceof HTMLElement &&
-      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+    const typing = isEditable(e.composedPath()[0]);
     if (e.key === 'Escape') {
-      if (lightbox) closeLightbox();
-      else if (mapCompose) closeMapCompose();
-      else if (state.map) closeMap();
-      else if (statusMenu) closeStatusMenu();
-      else if (state.draft) cancelDraft();
-      else if (popover) closePopover();
-      else if (state.pendingJump) cancelJump();
-      else if (state.mode) setMode(false);
-      else if (state.sidebar) setSidebar(false);
+      closeTopLayer();
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -3359,13 +3609,20 @@
     }, 250);
   }
 
+  const THEME_MARK_ATTRS = ['class', 'style', ...THEME_ATTRS];
   new MutationObserver(onMutate).observe(document.body, {
     subtree: true,
     childList: true,
     characterData: true,
     // class/style flips are how prototypes switch themes and screens
     attributes: true,
-    attributeFilter: ['class', 'style', 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state'],
+    attributeFilter: [...THEME_MARK_ATTRS, 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state'],
+  });
+  // <html> is outside body's subtree, and `html.dark` is where most prototypes
+  // keep their theme — without this the overlay never noticed the switch.
+  new MutationObserver(onMutate).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: THEME_MARK_ATTRS,
   });
   window.addEventListener('resize', onMutate);
   document.addEventListener('scroll', () => requestAnimationFrame(positionPins), {

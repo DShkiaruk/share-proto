@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, mouseClick, inOverlay, apiGet, apiPost } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiGet, apiPost, openList } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 const CLIENT = 'client-e2e';
@@ -7,8 +7,8 @@ test.describe.configure({ mode: 'serial' });
 
 const threadsOf = async (page) => (await apiGet(page, '/api/comments')).threads;
 const openFirst = async (page) => {
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1)); // Threads
-  await inOverlay(page, 'select.sort').selectOption('oldest');
+  await openList(page);
+  await inOverlay(page, 'select[aria-label="Sort comments"]').selectOption('oldest');
   await mouseClick(page, inOverlay(page, '.sb-row').first());
   await expect(inOverlay(page, '.popover')).toBeVisible();
 };
@@ -41,7 +41,7 @@ test('a client may only toggle Open/Done; progress is refused by the server', as
   expect(await apiPost(page, { action: 'status', threadId: mine.id, status: 'done' })).toBe(200);
   expect((await threadsOf(page)).find((x) => x.id === mine.id).status).toBe('done');
   expect(await apiPost(page, { action: 'status', threadId: mine.id, status: 'open' })).toBe(200);
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await mouseClick(page, inOverlay(page, '.sb-row').first());
   await mouseClick(page, inOverlay(page, '.popover .status'));
   await expect(inOverlay(page, '.status-menu button')).toHaveCount(2); // Open, Done
@@ -49,8 +49,8 @@ test('a client may only toggle Open/Done; progress is refused by the server', as
 
 test('reactions toggle on and off', async ({ page }) => {
   await login(page, 'Designer', TEAM);
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
-  await inOverlay(page, 'select.sort').selectOption('oldest');
+  await openList(page);
+  await inOverlay(page, 'select[aria-label="Sort comments"]').selectOption('oldest');
   await inOverlay(page, '.seg button').filter({ hasText: 'All' }).click();
   await mouseClick(page, inOverlay(page, '.sb-row').nth(1));
   await mouseClick(page, inOverlay(page, '.popover .react-add').first());
@@ -75,7 +75,7 @@ test('kind chips at creation; status filter; versions registered and labeled', a
   await expect(inOverlay(page, '.popover .kind-ico')).toBeVisible();
 
   await page.keyboard.press('Escape');
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await inOverlay(page, '.seg button').filter({ hasText: "Won’t do" }).click();
   await expect(inOverlay(page, '.sb-row')).toHaveCount(1);
   await inOverlay(page, '.seg button').filter({ hasText: 'All' }).click();
@@ -108,7 +108,7 @@ test('what’s new: a client comment since the last visit shows a New badge for 
   await page.reload();
   await page.waitForSelector('[data-fp-host]');
   await expect(inOverlay(page, '.tb-btn').nth(1)).toContainText(/new/i, { timeout: 10_000 });
-  await mouseClick(page, inOverlay(page, '.tb-btn').nth(1));
+  await openList(page);
   await expect(inOverlay(page, '.sb-group').filter({ hasText: 'New for you' })).toBeVisible();
   await expect(inOverlay(page, '.sb-row.new').filter({ hasText: 'client news' })).toBeVisible();
 });
