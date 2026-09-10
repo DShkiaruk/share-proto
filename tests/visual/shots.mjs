@@ -196,10 +196,21 @@ async function shootAll(theme, device) {
     const clipped = [...r.querySelectorAll('.status-seg button, .popover .who .name, .sb-row .name, .map-name, .kind-chip, .place, .nav-pos, .status, .theme-tag, .sb-row .time, .sort')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
+    // One control language: the status button and the list's pickers are the
+    // same box. They drifted apart once already — `.root button` outranks a
+    // single class, so the status control silently lost its resting fill.
+    const so = r.querySelector('.sort');
+    const box = (el) => el.getBoundingClientRect().height;
+    const cs2 = so && getComputedStyle(so);
+    const controls =
+      !st || !so || (cs.backgroundColor === cs2.backgroundColor && cs.borderRadius === cs2.borderRadius && box(st) === box(so))
+        ? null
+        : `status ${cs.backgroundColor} r${cs.borderRadius} h${box(st)} vs picker ${cs2.backgroundColor} r${cs2.borderRadius} h${box(so)}`;
     return {
       dark: r.querySelector('.root').classList.contains('dark'),
       nameFits: name ? name.scrollWidth <= name.clientWidth + 1 : null,
       statusColor: cs?.color, statusBg: cs?.backgroundColor,
+      controls,
       clipped,
     };
   }) });
@@ -256,6 +267,7 @@ const fails = [];
 for (const r of report) for (const row of r.rows) if (!row.ok) fails.push({ state: r.state, ...row });
 const diags = report.filter((r) => r.diag).map((r) => ({ state: r.state, ...r.diag }));
 const clipped = diags.flatMap((d) => d.clipped.map((c) => `${d.state}: ${c}`));
-console.log(JSON.stringify({ sampled: report.reduce((n, r) => n + r.rows.length, 0), fails, clipped, diags }, null, 1));
+const drifted = diags.filter((d) => d.controls).map((d) => `${d.state}: ${d.controls}`);
+console.log(JSON.stringify({ sampled: report.reduce((n, r) => n + r.rows.length, 0), fails, clipped, drifted, diags }, null, 1));
 // A measurement that cannot fail is decoration.
-if (fails.length || clipped.length) process.exit(1);
+if (fails.length || clipped.length || drifted.length) process.exit(1);

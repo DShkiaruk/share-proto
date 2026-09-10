@@ -1331,7 +1331,7 @@
 @media (pointer: coarse) {
   .sb-row .eye { opacity: 1; width: 26px; height: 26px; }
   .sb-row .eye svg { width: 16px; height: 16px; }
-  .status, .theme-tag.act { height: 34px; padding: 0 11px; }
+  .root .status, .root .theme-tag.act { height: 34px; padding: 0 11px; }
   .status-menu > button { padding: 10px; }
 }
 .popover-preview {
@@ -1353,8 +1353,11 @@
    is the only thing there shaped like a control: state glyph, the word, and a
    chevron for the menu behind it. As a bare coloured label it read as
    decoration and went unpressed. */
-.status,
-.theme-tag.act {
+/* `.root button { background: none }` outranks a single class, so these two
+   need the extra one — without it the quiet fill never landed and the status
+   control sat bare next to a filled <select>. */
+.root .status,
+.root .theme-tag.act {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1375,15 +1378,15 @@
 .status .chev { color: var(--muted-fg-2); margin: 0 -2px 0 -1px; }
 .status .chev svg { width: 12px; height: 12px; }
 @media (hover: hover) {
-  .status:hover,
-  .theme-tag.act:hover,
+  .root .status:hover,
+  .root .theme-tag.act:hover,
   .sort:hover {
     background-color: var(--surface);
     border-color: var(--border);
     box-shadow: var(--shadow-sm);
   }
 }
-.status[aria-expanded='true'] { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-sm); }
+.root .status[aria-expanded='true'] { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-sm); }
 .theme-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted-fg-2); flex: none; }
 .theme-tag.act { color: var(--ink); }
 
