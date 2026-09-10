@@ -63,8 +63,12 @@ THEME='{"action":"create","text":"smoke: left in the dark","screen":"smoke","scr
 THEME_R=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d "$THEME" "$D/api/comments")
 THEME_ID=$(printf '%s' "$THEME_R" | jq_ 'print(d.get("thread",{}).get("id",""))')
 check "$(printf '%s' "$THEME_R" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
-check "$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"create","text":"smoke: bad theme","screen":"smoke","screenLabel":"smoke","theme":{"mode":"neon"}}' "$D/api/comments" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
-curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$THEME_ID"'"}' "$D/api/comments"
+BAD_R=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"create","text":"smoke: bad theme","screen":"smoke","screenLabel":"smoke","theme":{"mode":"neon"}}' "$D/api/comments")
+check "$(printf '%s' "$BAD_R" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
+# Both go: a smoke run must leave a real deployment exactly as it found it.
+for id in "$THEME_ID" "$(printf '%s' "$BAD_R" | jq_ 'print(d.get("thread",{}).get("id",""))')"; do
+  curl -s -o /dev/null -b "$TMP/team.jar" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$id"'"}' "$D/api/comments"
+done
 
 LEARN=$(curl -s -b "$TMP/team.jar" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke: learns the way","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
