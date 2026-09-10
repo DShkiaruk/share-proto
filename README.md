@@ -66,6 +66,7 @@ Sign in with a name + password (the password decides the role). Press **C** or h
 - While a native `<dialog>` is open with `showModal()`, the browser makes everything outside it inert — the overlay included — so it stops responding until the dialog is closed. Comment on the control that opens the dialog instead; the crawler still captures the dialog as a screen for the map.
 - Comments and transitions made before this version carry no record of the clicks that reach them. They heal one at a time: the first person to open that state by hand teaches it, permanently.
 - Comments inside UI that closes when focus leaves it (some component libraries) may not be placeable — the composer needs focus.
+- A comment can offer to put the prototype's theme back only when the theme is a class token or a `data-theme`-style attribute on `<html>`, `<body>` or the app root — which is how prototypes do it. A theme driven any other way (inline styles, a swapped stylesheet) is still recorded and named in the thread; the picture taken at the time shows how it looked.
 - The Cloudflare Worker edition stores pictures inside its Durable Object, capped per room (`ROOM_MEDIA_BUDGET_MB`, 64 MB by default); a full room refuses new pictures rather than dropping old ones. Every server announces its API version, and the overlay hides whatever an older one cannot do.
 
 MIT
