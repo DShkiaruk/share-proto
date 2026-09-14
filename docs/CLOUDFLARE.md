@@ -46,16 +46,36 @@ It prints, line by line, what is missing and the exact fix — node, wrangler, t
 Cloudflare account. Work down the NEED lines in order and run it again until it
 says "Nothing is in the way". Do not continue past it.
 
-Two of those lines are the person's to do, and the wording to hand over is in the
-script's output. In short:
+One line is the person's to do, and one is yours.
 
-- **A Cloudflare account** — <https://dash.cloudflare.com/sign-up>, email and
-  password, free, no payment details. Tell them what it is for: it is what will
-  hold the comments; they own it, and nothing about the prototype itself moves
-  there.
-- **Signing in from this terminal** — they type `! cd worker && npx wrangler login`
-  themselves (it opens a browser with an Allow button). You cannot do this for
-  them: it needs their browser session.
+**Theirs: a Cloudflare account.** <https://dash.cloudflare.com/sign-up> — email
+and password, free, and it does not ask for a card. Tell them what it is for: it
+will hold the comments, they own it, and nothing about the prototype itself
+moves there.
+
+**Yours: signing this machine in.** Do not hand them a command to paste — run it:
+
+```bash
+bash scripts/cloudflare-login.sh
+```
+
+`wrangler login` asks nothing in the terminal. It opens their browser and waits
+for the OAuth callback on localhost:8976, so the only human part is pressing
+**Allow** on the page that appears. The script prints the link as well, in case
+no window opened, and waits until the sign-in lands (five minutes by default).
+
+Two cases where the callback cannot come back:
+
+- **This is running somewhere their browser cannot reach** — a container, an SSH
+  session. Use `bash scripts/cloudflare-login.sh --device`: they open a page and
+  type a short code instead, and no callback is needed.
+- **No browser at all** (CI, a locked-down machine). Then it is an API token:
+  they make one at <https://dash.cloudflare.com/profile/api-tokens> with the
+  *Edit Cloudflare Workers* template, and it goes in the environment as
+  `CLOUDFLARE_API_TOKEN` — wrangler uses it and never asks to log in.
+
+(The Vercel side is different and still needs them: `vercel login` prompts in the
+terminal itself, so it stays `! vercel login`.)
 
 ## 2. Passwords and secrets
 

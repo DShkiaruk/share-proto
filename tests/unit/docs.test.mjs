@@ -91,7 +91,9 @@ test('the Cloudflare runbook only names things that exist', () => {
     ]),
   ];
   assert.ok(named.includes('DESIGNER_PASSWORD') && named.includes('ROOM_PASSWORDS'), `parser broke: ${named.join(', ')}`);
-  for (const v of named) {
+  // Variables wrangler itself consumes are not the Worker's environment.
+  const TOOLING = new Set(['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']);
+  for (const v of named.filter((x) => !TOOLING.has(x))) {
     assert.match(worker, new RegExp(`env\\.${v}\\b`), `CLOUDFLARE.md names ${v}, but the Worker never reads it`);
   }
 
@@ -113,7 +115,10 @@ test('the preflight names a fix for everything it can refuse', () => {
     assert.ok(/["']\s+["']/.test(call), `a preflight check refuses without saying how to fix it: ${call.slice(0, 60)}`);
   }
   assert.match(pre, /dash\.cloudflare\.com\/sign-up/, 'the preflight stopped telling people where to make the account');
-  assert.match(pre, /wrangler login/, 'the preflight stopped telling people how to sign in');
+  // Signing in is the assistant's job, not a command handed over to be pasted.
+  assert.match(pre, /cloudflare-login\.sh/, 'the preflight stopped pointing at the login helper');
+  assert.ok(!/!\s*cd worker && npx wrangler login/.test(pre), 'the preflight went back to asking the person to type it');
+  assert.ok(existsSync(join(root, 'scripts/cloudflare-login.sh')), 'the login helper is missing');
 });
 
 /* The assembler is what every install goes through, so the choice of where
@@ -140,5 +145,18 @@ test('assemble can point a new project at a comments host from the start', () =>
     assert.match(readFileSync(join(plain, 'public/index.html'), 'utf8'), /<script src="\/overlay\.js" defer>/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* A shell script with a stray quote fails at the line it reaches, which may be
+   minutes into a setup on someone else's machine. `bash -n` costs nothing and
+   catches it here. (It caught one: a quote in the preflight's Cloudflare
+   branch, which only showed up when that branch was taken.) */
+test('every shell script parses', () => {
+  for (const f of readdirSync(join(root, 'scripts')).filter((f) => f.endsWith('.sh'))) {
+    assert.doesNotThrow(
+      () => execFileSync('bash', ['-n', join(root, 'scripts', f)], { stdio: 'pipe' }),
+      `scripts/${f} does not parse`
+    );
   }
 });

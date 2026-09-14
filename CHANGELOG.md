@@ -195,3 +195,15 @@ machine nobody here will ever see.
 - Tests read the runbook against the code: every script it names exists, every
   secret it tells people to set is one the Worker reads, the tag it hands over
   is the one the overlay understands. Verified by breaking each on purpose.
+- **The assistant signs the machine in, rather than handing over a command to
+  paste.** `wrangler login` asks nothing in the terminal — it opens a browser
+  and waits for the callback — so `scripts/cloudflare-login.sh` runs it, prints
+  the link in case no window opened, and waits for the sign-in to land.
+  `--device` covers a container or an SSH session where the callback cannot come
+  back, and `CLOUDFLARE_API_TOKEN` covers no browser at all. (The Vercel side
+  still needs the person: `vercel login` prompts in the terminal itself.)
+- Two false readys found by testing the preflight instead of trusting it:
+  `wrangler whoami` says "account" while logged out, so the check now looks for
+  the address, which is the only thing that means there is a session; and a
+  stray quote in a branch that is only taken on a signed-out machine now fails
+  `bash -n` in the test suite instead of on someone's setup.

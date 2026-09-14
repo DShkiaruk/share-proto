@@ -84,16 +84,19 @@ if [ "$WANT_WORKER" = 1 ]; then
     later "wrangler and the Cloudflare account — checked once node is installed"
   elif [ -x "$WRANGLER" ] && WV=$("$WRANGLER" --version 2>/dev/null | tail -1) && [ -n "$WV" ]; then
     ok "wrangler $WV"
-    # `wrangler whoami` answers even when logged out, so the account line is
-    # what says whether there is a session.
-    if OUT=$($WRANGLER whoami 2>&1) && printf '%s' "$OUT" | grep -qi 'account'; then
-      ok "signed in to Cloudflare$(printf '%s' "$OUT" | grep -io 'associated with the email [^ ]*' | sed 's/associated with the email/ as/')"
+    # `wrangler whoami` exits 0 and says plenty either way — including the word
+    # "account" while logged out, which is what this used to match and call
+    # ready. The address is the only thing that means there is a session.
+    WHO=$($WRANGLER whoami 2>&1 | grep -io 'associated with the email [^ ]*' | sed 's/associated with the email //; s/\.$//')
+    if [ -n "$WHO" ]; then
+      ok "signed in to Cloudflare as $WHO"
     else
-      gap "a Cloudflare account, signed in" "free, and it does not ask for a card:"
-      hand "1. https://dash.cloudflare.com/sign-up — email + password, no payment details"
-      hand "2. then, in this terminal, they type:  ! cd worker && npx wrangler login"
-      hand "   (it opens a browser page with an Allow button)"
-      hand "3. re-run this preflight"
+      gap "a Cloudflare account, signed in" "bash scripts/cloudflare-login.sh"
+      hand "That opens the browser and waits; the only human part is pressing Allow."
+      hand "If they have no account yet, they make one first — free, no card asked for:"
+      hand "  https://dash.cloudflare.com/sign-up — email + password"
+      hand "Add --device if this is running somewhere their browser cannot reach"
+      hand "(a container, an SSH session)."
     fi
   else
     gap "wrangler (the Cloudflare CLI)" "cd worker && npm install"
