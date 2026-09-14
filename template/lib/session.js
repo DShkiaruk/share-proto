@@ -50,6 +50,52 @@ export async function verifyToken(token, secret) {
   }
 }
 
+/* A session is issued for one room and is not a key to the others.
+
+   Rooms were built for one client's many PR previews, where a single pair of
+   passwords over all of them is the point. The moment one deployment hosts
+   rooms for *different* clients — which is what happens when someone hosts the
+   comments for several projects — that same property means anyone holding one
+   room's password can read and write the rest by changing ?room=. Two things
+   close it: a token that names the room it was minted for (here), and
+   passwords that can differ per room (roomPasswords, below).
+
+   A token from before this carries no room claim. It is honoured for the
+   default room only, so existing links keep working and an old token still
+   cannot roam. */
+export const sessionAllowsRoom = (session, room) =>
+  Boolean(session) && (session.room || '') === (room || '');
+
+/* Which passwords open a room. `perRoom` is JSON — {"<room>": {"designer": …,
+   "client": …}} — and a room named there is opened by its own pair only: the
+   deployment-wide password must not be a master key to a client's room. Rooms
+   not named there keep the deployment-wide pair, which is the single-client
+   case and stays as simple as it was. */
+export function roomPasswords({ designer, client, perRoom }, room) {
+  if (perRoom && room) {
+    let table = perRoom;
+    if (typeof table === 'string') {
+      try {
+        table = JSON.parse(table);
+      } catch {
+        table = null; // a malformed table must not silently open every room
+      }
+    }
+    const own = table && typeof table === 'object' ? table[room] : null;
+    if (own && typeof own === 'object') {
+      return { designer: own.designer || null, client: own.client || null };
+    }
+  }
+  return { designer: designer || null, client: client || null };
+}
+
+export function roleFor(password, passwords) {
+  if (!password) return null;
+  if (passwords.designer && password === passwords.designer) return 'designer';
+  if (passwords.client && password === passwords.client) return 'client';
+  return null;
+}
+
 export function parseCookies(header) {
   const out = {};
   for (const part of (header || '').split(';')) {

@@ -32,7 +32,9 @@
       (location.hostname.toLowerCase().match(/^(pr-\d+)\./) || [])[1] ||
       location.hostname.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 63)
     : null;
-  const TOKEN_KEY = `fp_token::${API_ORIGIN}`;
+  // Per room as well as per host: a session belongs to one room now, so one
+  // stored token for a whole host would be handed to the wrong room.
+  const TOKEN_KEY = `fp_token::${API_ORIGIN}::${ROOM}`;
   let authToken = EMBED ? localStorage.getItem(TOKEN_KEY) : null;
   const apiUrl = (path) =>
     (EMBED ? API_ORIGIN : '') + path + (ROOM ? `?room=${encodeURIComponent(ROOM)}` : '');
@@ -787,7 +789,9 @@
       btn.disabled = true;
       btn.textContent = 'Checking…';
       try {
-        const r = await fetch(API_ORIGIN + '/api/login', {
+        // With the room: the session is minted for the room it will be used in,
+        // so one room's password is not a key to another's.
+        const r = await fetch(apiUrl('/api/login'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, password }),

@@ -20,14 +20,23 @@ async function signIn(page, name = 'Embed Designer', pass = TEAM) {
   await expect(card).toHaveCount(0, { timeout: 15_000 });
   await expect(inOverlay(page, '.toolbar')).toBeVisible();
 }
+/* Reads a room the way a person would: by signing in to that room. A session
+   belongs to the room it was made in, so one token cannot be used to peek into
+   another — which is the property this spec is here to hold. */
 const roomThreads = (page, room) =>
   page.evaluate(
-    async ([api, r]) => {
-      const token = localStorage.getItem(`fp_token::${api}`);
-      const res = await fetch(`${api}/api/comments${r ? `?room=${r}` : ''}`, { headers: { Authorization: `Bearer ${token}` } });
+    async ([api, r, pass]) => {
+      const q = r ? `?room=${r}` : '';
+      const login = await fetch(`${api}/api/login${q}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Reader', password: pass }),
+      });
+      const { token } = await login.json();
+      const res = await fetch(`${api}/api/comments${q}`, { headers: { Authorization: `Bearer ${token}` } });
       return (await res.json()).threads;
     },
-    [API, room]
+    [API, room, TEAM]
   );
 
 test('an unsigned-in visitor is not blocked by the overlay and can dismiss it', async ({ page }) => {
@@ -59,6 +68,19 @@ test('a comment made in the embed lands in its room, not in the host prototype',
   expect(created.screenLabel).toBe('Checkout');
   const defaultRoom = await roomThreads(page, null);
   expect(defaultRoom.some((t) => t.messages[0].text.startsWith('embed:'))).toBe(false);
+
+  // And the session that made it is not a key to the rest of the host.
+  const elsewhere = await page.evaluate(
+    async ([api, room]) => {
+      const token = localStorage.getItem(`fp_token::${api}::${room}`);
+      const mine = await fetch(`${api}/api/comments?room=${room}`, { headers: { Authorization: `Bearer ${token}` } });
+      const theirs = await fetch(`${api}/api/comments?room=someone-else`, { headers: { Authorization: `Bearer ${token}` } });
+      const home = await fetch(`${api}/api/comments`, { headers: { Authorization: `Bearer ${token}` } });
+      return [mine.status, theirs.status, home.status];
+    },
+    [API, 'pr-7']
+  );
+  expect(elsewhere).toEqual([200, 401, 401]);
 });
 
 test('media loads through the bearer header as a blob: URL, never with a token in the URL', async ({ page }) => {

@@ -5,7 +5,7 @@ import { canSee } from '../lib/threads.js';
 import { labelKey } from '../lib/state.js';
 
 const store = createStateStore(storage);
-import { sessionFromHeaders } from '../lib/session.js';
+import { sessionFromHeaders, sessionAllowsRoom } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
 /* Serves private media (thread previews, attachments, screen shots) behind
@@ -31,6 +31,8 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: 'Not authenticated' });
 
   const room = roomFromReq(req);
+  // Signed in for one room is not signed in for the rest of them.
+  if (!sessionAllowsRoom(session, room)) return res.status(401).json({ error: 'Not authenticated for this room' });
   const root = room ? `rooms/${room}/` : '';
   const rel = String(url.searchParams.get('p') || '');
   if (!SAFE.test(rel) || rel.includes('..')) return res.status(400).json({ error: 'Bad path' });

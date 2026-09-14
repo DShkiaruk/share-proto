@@ -65,8 +65,16 @@ fi
 # --- auth ---------------------------------------------------------------
 check "$(code -H 'Content-Type: application/json' -d '{"password":"nope","name":"x"}' "$D/api/login")" 401 "wrong password → 401"
 check "$(code "$D/api/comments")" 401 "GET /api/comments without a token → 401"
-TEAM_T=$(curl -s -H 'Content-Type: application/json' -d '{"password":"'"$TEAM"'","name":"Dee"}' "$D/api/login" | jq_ 'print(d.get("token",""))')
-CLIENT_T=$(curl -s -H 'Content-Type: application/json' -d '{"password":"'"$CLIENT"'","name":"Cliff"}' "$D/api/login" | jq_ 'print(d.get("token",""))')
+# A session is minted for one room, so the smoke signs in for each room it uses:
+# the default one for the host-wide checks, pr-7 for the room's own.
+login() { curl -s -H 'Content-Type: application/json' -d '{"password":"'"$1"'","name":"'"$2"'"}' "$D/api/login${3:+?room=$3}" | jq_ 'print(d.get("token",""))'; }
+TEAM_T=$(login "$TEAM" Dee)
+CLIENT_T=$(login "$CLIENT" Cliff)
+TEAM_R=$(login "$TEAM" Dee pr-7)
+CLIENT_R=$(login "$CLIENT" Cliff pr-7)
+# Minted here, not where it is used: the brute-force check below locks this
+# address out of /api/login for ten minutes on purpose.
+TEAM_RACE=$(login "$TEAM" Dee race)
 check "$([ -n "$TEAM_T" ] && echo yes)" yes "team password → a bearer token"
 check "$(api "$CLIENT_T" "$D/api/comments" | jq_ 'print(d.get("role"))')" client "client password → client role"
 
@@ -87,63 +95,69 @@ check "$(api "$TEAM_T" "$D/api/comments" | jq_ 'print(d.get("name"), isinstance(
 
 # --- rooms and role isolation ------------------------------------------
 NEW='{"action":"create","text":"worker smoke (designer)","screen":"s","screenLabel":"Home","anchor":{"path":"body"}}'
-TID=$(api "$TEAM_T" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
+TID=$(api "$TEAM_R" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
 check "$([ -n "$TID" ] && echo yes)" yes "a designer can comment in a room"
-check "$(api "$TEAM_T" "$D/api/comments?room=pr-7" | grep -c "$TID")" 1 "the comment is in its room"
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | grep -c "$TID")" 1 "the comment is in its room"
 check "$(api "$TEAM_T" "$D/api/comments" | grep -c "$TID")" 0 "and not in the default room"
-check "$(api "$CLIENT_T" "$D/api/comments?room=pr-7" | grep -c "$TID")" 0 "a client does not see a designer thread"
-check "$(code -X POST -H "Authorization: Bearer $CLIENT_T" -H 'Content-Type: application/json' \
+check "$(api "$CLIENT_R" "$D/api/comments?room=pr-7" | grep -c "$TID")" 0 "a client does not see a designer thread"
+check "$(code -X POST -H "Authorization: Bearer $CLIENT_R" -H 'Content-Type: application/json' \
   -d '{"action":"reply","threadId":"'"$TID"'","text":"x"}' "$D/api/comments?room=pr-7")" 404 "nor reply to one"
 
 # --- private media ------------------------------------------------------
 PIX=$(python3 -c "import base64;print('data:image/png;base64,'+base64.b64encode(open('tests/fixtures/pixel.png','rb').read()).decode())")
 WITH_IMG=$(python3 -c "import json,sys;print(json.dumps({'action':'create','text':'worker smoke (client)','screen':'s','screenLabel':'Home','anchor':{'path':'body'},'images':[sys.argv[1]]}))" "$PIX")
-CT=$(api "$CLIENT_T" -d "$WITH_IMG" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
-IMG=$(api "$CLIENT_T" "$D/api/comments?room=pr-7" | jq_ 'print(next(m["img"][0] for t in d["threads"] for m in t["messages"] if m.get("img")))')
+CT=$(api "$CLIENT_R" -d "$WITH_IMG" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
+IMG=$(api "$CLIENT_R" "$D/api/comments?room=pr-7" | jq_ 'print(next(m["img"][0] for t in d["threads"] for m in t["messages"] if m.get("img")))')
 check "$([ -n "$IMG" ] && echo yes)" yes "an attachment is stored and referenced"
-check "$(code -H "Authorization: Bearer $CLIENT_T" "$D/api/file?p=$IMG&room=pr-7")" 200 "the author fetches it with the bearer header"
+check "$(code -H "Authorization: Bearer $CLIENT_R" "$D/api/file?p=$IMG&room=pr-7")" 200 "the author fetches it with the bearer header"
 check "$(code "$D/api/file?p=$IMG&room=pr-7")" 401 "without a token → 401"
 check "$(code "$D/api/file?p=$IMG&room=pr-7&token=$CLIENT_T")" 401 "a token in the URL is not a session"
-check "$(code -H "Authorization: Bearer $CLIENT_T" "$D/api/file?p=../../secret.png&room=pr-7")" 400 "a path outside the room is refused"
+check "$(code -H "Authorization: Bearer $CLIENT_R" "$D/api/file?p=../../secret.png&room=pr-7")" 400 "a path outside the room is refused"
 
 # A hidden screen is hidden everywhere, not only in the map's rendering.
 SHOT=$(python3 -c "import json,sys;print(json.dumps({'action':'shot','label':'Secret','image':sys.argv[1]}))" "$PIX")
-SPATH=$(api "$TEAM_T" -d "$SHOT" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("path",""))')
-api "$TEAM_T" -d '{"action":"mapmeta","hide":"Secret"}' "$D/api/comments?room=pr-7" >/dev/null
-check "$(api "$CLIENT_T" "$D/api/comments?room=pr-7" | jq_ 'print("Secret" in d.get("shots",{}), d.get("mapmeta",{}).get("hidden"))')" "False []" "a hidden screen is absent from the client's map"
-check "$(code -H "Authorization: Bearer $CLIENT_T" "$D/api/file?p=$SPATH&room=pr-7")" 404 "and its picture 404s for the client"
-check "$(code -H "Authorization: Bearer $TEAM_T" "$D/api/file?p=$SPATH&room=pr-7")" 200 "while the designer still sees it"
+SPATH=$(api "$TEAM_R" -d "$SHOT" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("path",""))')
+api "$TEAM_R" -d '{"action":"mapmeta","hide":"Secret"}' "$D/api/comments?room=pr-7" >/dev/null
+check "$(api "$CLIENT_R" "$D/api/comments?room=pr-7" | jq_ 'print("Secret" in d.get("shots",{}), d.get("mapmeta",{}).get("hidden"))')" "False []" "a hidden screen is absent from the client's map"
+check "$(code -H "Authorization: Bearer $CLIENT_R" "$D/api/file?p=$SPATH&room=pr-7")" 404 "and its picture 404s for the client"
+check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/file?p=$SPATH&room=pr-7")" 200 "while the designer still sees it"
 
 # --- what the newest overlay needs of a server ---------------------------
 # A comment about a screen carries no anchor and no pin.
-SCREEN_C=$(api "$TEAM_T" -d '{"action":"create","text":"about the screen","screen":"Home","screenLabel":"Home"}' "$D/api/comments?room=pr-7")
+SCREEN_C=$(api "$TEAM_R" -d '{"action":"create","text":"about the screen","screen":"Home","screenLabel":"Home"}' "$D/api/comments?room=pr-7")
 check "$(printf '%s' "$SCREEN_C" | jq_ 'print(d.get("thread",{}).get("anchor"), d.get("thread",{}).get("trail"))')" "None []" "a comment can be about a screen, with no anchor"
 
 # The state a comment was left in: the mode, and the marks that can restore it.
 THEME='{"action":"create","text":"left in the dark","screen":"Home","screenLabel":"Home","theme":{"mode":"dark","marks":{"html":{"cls":["dark"],"attrs":{"data-theme":"dark"}}},"junk":1}}'
-check "$(api "$TEAM_T" -d "$THEME" "$D/api/comments?room=pr-7" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
-check "$(api "$TEAM_T" -d '{"action":"create","text":"bad theme","screen":"Home","screenLabel":"Home","theme":{"mode":"neon"}}' "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
+check "$(api "$TEAM_R" -d "$THEME" "$D/api/comments?room=pr-7" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
+check "$(api "$TEAM_R" -d '{"action":"create","text":"bad theme","screen":"Home","screenLabel":"Home","theme":{"mode":"neon"}}' "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
+
+# A session belongs to the room it was made in. Without this, one client's
+# password reads every other room on the same worker.
+check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments?room=pr-9")" 401 "a session does not open another room"
+check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments")" 401 "nor the default room"
+check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments?room=pr-7")" 200 "and still opens its own"
 
 # A room can be moved in: verbatim, designer-only, and idempotent.
 IMP='{"action":"import","threads":[{"id":"66666666-6666-4666-8666-666666666666","createdAt":1000,"authorRole":"client","author":"Olena","screen":"Home","screenLabel":"Home","n":9001,"messages":[{"author":"Olena","role":"client","text":"moved in","at":1000}]}]}'
-check "$(api "$TEAM_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"
-check "$(api "$TEAM_T" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="66666666-6666-4666-8666-666666666666"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 9001 1000" "with its author, number and time"
-check "$(api "$TEAM_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("skipped"))')" "1" "and a second run adds nothing"
-check "$(api "$CLIENT_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("error"))')" "Not allowed" "a client cannot move a room in"
+check "$(api "$TEAM_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="66666666-6666-4666-8666-666666666666"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 9001 1000" "with its author, number and time"
+check "$(api "$TEAM_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("skipped"))')" "1" "and a second run adds nothing"
+check "$(api "$CLIENT_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("error"))')" "Not allowed" "a client cannot move a room in"
 
 # A comment learns the way back to its state, once.
-LEARN=$(api "$TEAM_T" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
+LEARN=$(api "$TEAM_R" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
 TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#row","t":"button","txt":"Acme"},"txt":"Acme"}]}'
-check "$(api "$TEAM_T" -d "$TRAIL" "$D/api/comments?room=pr-7" | jq_ 'print(len(d.get("thread",{}).get("trail",[])), d["thread"]["trail"][0]["txt"])')" "1 Acme" "a comment can be taught the way back"
+check "$(api "$TEAM_R" -d "$TRAIL" "$D/api/comments?room=pr-7" | jq_ 'print(len(d.get("thread",{}).get("trail",[])), d["thread"]["trail"][0]["txt"])')" "1 Acme" "a comment can be taught the way back"
 RETEACH='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#other","t":"button","txt":"Other"},"txt":"Other"}]}'
-check "$(api "$TEAM_T" -d "$RETEACH" "$D/api/comments?room=pr-7" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
-check "$(code -X POST -H "Authorization: Bearer $TEAM_T" -H 'Content-Type: application/json' -d '{"action":"trail","threadId":"'"$LEARN"'","trail":[]}' "$D/api/comments?room=pr-7")" 400 "an empty trail teaches nothing"
+check "$(api "$TEAM_R" -d "$RETEACH" "$D/api/comments?room=pr-7" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
+check "$(code -X POST -H "Authorization: Bearer $TEAM_R" -H 'Content-Type: application/json' -d '{"action":"trail","threadId":"'"$LEARN"'","trail":[]}' "$D/api/comments?room=pr-7")" 400 "an empty trail teaches nothing"
 
 # An edge remembers the in-screen clicks that make its control reachable.
 EDGE='{"action":"edge","from":"Home","to":"Report","anchor":{"path":"a#r","t":"a","txt":"Go to report"},"trail":[{"anchor":{"path":"button#adv","t":"button","txt":"Advanced"},"txt":"Advanced"}]}'
-api "$TEAM_T" -d "$EDGE" "$D/api/comments?room=pr-7" >/dev/null
-check "$(api "$TEAM_T" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("navTrail",{}).get("Home>Report",[{}])[0].get("txt"))')" "Advanced" "an edge keeps the steps that reach its control"
-check "$(api "$TEAM_T" -d '{"action":"mapmeta","hide":"Report"}' "$D/api/comments?room=pr-7" | jq_ 'print(int("Report" in d.get("mapmeta",{}).get("hidden",[])))')" 1 "cleanup: a test screen can be hidden from the map"
+api "$TEAM_R" -d "$EDGE" "$D/api/comments?room=pr-7" >/dev/null
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("navTrail",{}).get("Home>Report",[{}])[0].get("txt"))')" "Advanced" "an edge keeps the steps that reach its control"
+check "$(api "$TEAM_R" -d '{"action":"mapmeta","hide":"Report"}' "$D/api/comments?room=pr-7" | jq_ 'print(int("Report" in d.get("mapmeta",{}).get("hidden",[])))')" 1 "cleanup: a test screen can be hidden from the map"
 
 # --- CORS ---------------------------------------------------------------
 check "$(curl -s -D - -o /dev/null -H 'Origin: http://localhost:4174' -H "Authorization: Bearer $TEAM_T" "$D/api/comments" | grep -ci 'access-control-allow-origin: http://localhost:4174')" 1 "an allow-listed origin gets CORS headers"
@@ -156,7 +170,7 @@ check "$(curl -s -D - -o /dev/null "$D/overlay.js" | grep -ci 'access-control-al
 # so this check guards the outcome, not one particular mechanism.)
 RACE_PIDS=""
 for i in 1 2 3 4 5 6; do
-  ( curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TEAM_T" -H 'Content-Type: application/json' \
+  ( curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TEAM_RACE" -H 'Content-Type: application/json' \
       -d "{\"action\":\"create\",\"text\":\"race $i\",\"screen\":\"s\",\"screenLabel\":\"Home\",\"anchor\":{\"path\":\"body\"}}" \
       "$D/api/comments?room=race" > "$TMP/$i.code" ) &
   RACE_PIDS="$RACE_PIDS $!"
@@ -164,6 +178,6 @@ done
 # Named PIDs, not a bare `wait`: the server itself is a background job here.
 wait $RACE_PIDS
 check "$(cat "$TMP"/*.code | sort -u | tr -d '\n')" 200 "6 concurrent comments all succeed"
-check "$(api "$TEAM_T" "$D/api/comments?room=race" | jq_ 'ns=[t["n"] for t in d["threads"]]; print(len(ns), len(set(ns)))')" "6 6" "6 concurrent comments, 6 unique numbers"
+check "$(api "$TEAM_RACE" "$D/api/comments?room=race" | jq_ 'ns=[t["n"] for t in d["threads"]]; print(len(ns), len(set(ns)))')" "6 6" "6 concurrent comments, 6 unique numbers"
 
 [ $fail = 0 ] && echo "ALL OK" || { echo "WORKER SMOKE FAILED"; tail -20 "$TMP/wrangler.log"; exit 1; }

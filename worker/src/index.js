@@ -11,7 +11,7 @@
    never reads it off the request body. */
 
 import { DurableObject } from 'cloudflare:workers';
-import { createToken, sessionFromHeaders } from '../../template/lib/session.js';
+import { createToken, sessionFromHeaders, sessionAllowsRoom, roomPasswords, roleFor } from '../../template/lib/session.js';
 import { originAllowed, ROOM_RE } from '../../template/lib/cors.js';
 import { clean } from '../../template/lib/threads.js';
 import { Room } from './room.js';
@@ -168,20 +168,20 @@ export default {
       const ip = req.headers.get('CF-Connecting-IP') || (req.headers.get('X-Forwarded-For') || 'local').split(',')[0].trim();
       const auth = env.ROOM.getByName(AUTH_ROOM);
       if (await auth.loginBlocked(ip)) return json(429, { error: 'Too many attempts' }, cors);
-      const password = body.password;
-      const role =
-        password && password === env.DESIGNER_PASSWORD
-          ? 'designer'
-          : password && password === env.CLIENT_PASSWORD
-            ? 'client'
-            : null;
+      // The room is decided here, not later: the token is minted for it.
+      const asked = (url.searchParams.get('room') || '').toLowerCase();
+      const room = ROOM_RE.test(asked) ? asked : '';
+      const role = roleFor(
+        body.password,
+        roomPasswords({ designer: env.DESIGNER_PASSWORD, client: env.CLIENT_PASSWORD, perRoom: env.ROOM_PASSWORDS }, room)
+      );
       await auth.noteLogin(ip, Boolean(role));
       if (!role) {
         await new Promise((r) => setTimeout(r, 800));
         return json(401, { error: 'Wrong password' }, cors);
       }
       const token = await createToken(
-        { r: role, n: cleanName, exp: Date.now() + SIXTY_DAYS_MS },
+        { r: role, n: cleanName, ...(room ? { room } : {}), exp: Date.now() + SIXTY_DAYS_MS },
         env.SESSION_SECRET
       );
       return json(200, { role, token }, cors);
@@ -194,6 +194,10 @@ export default {
         env.SESSION_SECRET
       );
       if (!session) return json(401, { error: 'Not authenticated' }, cors);
+      const asked = (url.searchParams.get('room') || '').toLowerCase();
+      const wanted = ROOM_RE.test(asked) ? asked : '';
+      // Signed in for one room is not signed in for the rest of them.
+      if (!sessionAllowsRoom(session, wanted)) return json(401, { error: 'Not authenticated for this room' }, cors);
       if (req.method !== 'GET' && req.method !== 'POST') {
         return json(405, { error: 'Method not allowed' }, cors);
       }
@@ -202,8 +206,7 @@ export default {
       }
       const role = session.r === 'designer' ? 'designer' : 'client';
       const author = clean(session.n, MAX_NAME) || (role === 'designer' ? 'Designer' : 'Client');
-      const q = (url.searchParams.get('room') || '').toLowerCase();
-      const stub = env.ROOM.getByName(ROOM_RE.test(q) ? q : '_');
+      const stub = env.ROOM.getByName(wanted || '_');
 
       // The body is buffered here, not streamed, so an oversized payload is
       // refused before it reaches the room's storage.

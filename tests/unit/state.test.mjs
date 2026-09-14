@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sessionAllowsRoom, roomPasswords, roleFor } from '../../template/lib/session.js';
 import { createStateStore, isValidState, labelKey, applyShot, applyMapMeta, applyVersionEvent } from '../../template/lib/state.js';
 import { applyCreate } from '../../template/lib/threads.js';
 
@@ -218,4 +219,43 @@ test('a shot borrowed from a comment preview never replaces a real one', () => {
   const filled = applyShot({}, { label: 'Home', path: 'shots/a/3.jpg', from: 'preview' });
   assert.equal(filled.Home, 'shots/a/3.jpg'); // but it may fill an empty slot
   assert.equal(applyShot(filled, { label: 'Home', path: 'shots/a/4.jpg' }).Home, 'shots/a/4.jpg');
+});
+
+// Rooms exist so one deployment can host several reviews. That only holds if a
+// session belongs to the room it was made in — otherwise one room's password is
+// a key to every other room on the same host.
+test('a session is scoped to the room it was issued for', () => {
+  const inA = { r: 'client', n: 'Olena', room: 'client-a' };
+  assert.equal(sessionAllowsRoom(inA, 'client-a'), true);
+  assert.equal(sessionAllowsRoom(inA, 'client-b'), false);
+  assert.equal(sessionAllowsRoom(inA, ''), false, 'nor the default room');
+  assert.equal(sessionAllowsRoom(null, 'client-a'), false);
+  // A token minted before rooms were scoped carries no claim: it keeps working
+  // where it always did — the default room — and cannot roam from there.
+  const legacy = { r: 'designer', n: 'Dima' };
+  assert.equal(sessionAllowsRoom(legacy, ''), true);
+  assert.equal(sessionAllowsRoom(legacy, 'client-a'), false);
+});
+
+test('a room with its own passwords is not opened by the deployment-wide pair', () => {
+  const env = {
+    designer: 'house-team',
+    client: 'house-client',
+    perRoom: JSON.stringify({ acme: { designer: 'acme-team', client: 'acme-client' } }),
+  };
+  const acme = roomPasswords(env, 'acme');
+  assert.equal(roleFor('acme-team', acme), 'designer');
+  assert.equal(roleFor('acme-client', acme), 'client');
+  assert.equal(roleFor('house-team', acme), null, 'the house password is not a master key');
+
+  // A room nobody named keeps the deployment-wide pair — the single-client case.
+  const other = roomPasswords(env, 'someone-else');
+  assert.equal(roleFor('house-team', other), 'designer');
+  assert.equal(roleFor('acme-team', other), null);
+
+  // A malformed table must not quietly open everything.
+  const broken = roomPasswords({ designer: 'd', client: 'c', perRoom: '{not json' }, 'acme');
+  assert.equal(roleFor('d', broken), 'designer');
+  assert.equal(roleFor('', broken), null);
+  assert.equal(roleFor(undefined, { designer: null, client: null }), null);
 });

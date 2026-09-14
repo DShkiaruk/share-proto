@@ -161,3 +161,19 @@ that during one review week.
   left open used to spend about a thousand reads in a working day.
 - `SKILL.md` now decides where comments live at install time, with the numbers
   for both free tiers, instead of defaulting to the one that runs out.
+
+### Rooms are sealed from each other
+Found while checking whether one worker could host several clients: it could
+not. A session carried the role and the name but not the room, and one pair of
+passwords opened every room on a deployment — so anyone holding one room's
+password could read and write the others by changing `?room=`. Fine for the
+case rooms were built for (one client, many PR previews); not fine the moment
+two clients share a host.
+- A session is now issued **for one room** and refused by the others. Tokens
+  from before this carry no claim and are honoured for the default room only,
+  so existing links keep working and an old token still cannot roam.
+- `ROOM_PASSWORDS` (optional, JSON) gives a room its own pair, and then the
+  deployment-wide password is not a master key to it. Rooms without an entry
+  keep the deployment-wide pair.
+- Both smoke scripts check it now, and the embed spec reads a room the way a
+  person does — by signing in to that room.

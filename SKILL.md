@@ -143,6 +143,23 @@ that is the one case where the quota has to be lifted first (a Pro trial is the
 fastest; support is the free route). Build the target and run the move the
 moment it answers.
 
+### One worker, several clients
+
+Rooms were built for one client's many PR previews, where a single pair of
+passwords over all of them is the point. Hosting rooms for **different**
+clients on one worker is a different situation, and it needs `ROOM_PASSWORDS`:
+
+```bash
+npx wrangler secret put ROOM_PASSWORDS
+# {"acme-app": {"designer": "…", "client": "…"}, "globex": {"designer": "…", "client": "…"}}
+```
+
+A room named there is opened by its own pair only — the deployment-wide
+password is not a master key to it. Rooms not named there keep the
+deployment-wide pair, so the single-client case stays as simple as it was. A
+session is issued for one room and is refused by the others either way, so one
+client cannot read another's comments by changing `?room=`.
+
 Ten wrong passwords from one address lock it out for ten minutes (the counter
 lives in a Durable Object, so it holds across the whole worker — the other two
 editions can only count per instance).

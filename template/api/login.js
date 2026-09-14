@@ -1,5 +1,5 @@
-import { createToken } from '../lib/session.js';
-import { applyCors } from '../lib/cors.js';
+import { createToken, roomPasswords, roleFor } from '../lib/session.js';
+import { applyCors, roomFromReq } from '../lib/cors.js';
 
 const SIXTY_DAYS_S = 60 * 24 * 60 * 60;
 
@@ -40,12 +40,16 @@ export default async function handler(req, res) {
   if (!cleanName) {
     return res.status(400).json({ error: 'Missing name' });
   }
-  const role =
-    password && password === process.env.DESIGNER_PASSWORD
-      ? 'designer'
-      : password && password === process.env.CLIENT_PASSWORD
-        ? 'client'
-        : null;
+  // The room is decided here, not later: the token is minted for it, and a
+  // room with its own passwords is not opened by the deployment-wide pair.
+  const room = roomFromReq(req);
+  const role = roleFor(
+    password,
+    roomPasswords(
+      { designer: process.env.DESIGNER_PASSWORD, client: process.env.CLIENT_PASSWORD, perRoom: process.env.ROOM_PASSWORDS },
+      room
+    )
+  );
   if (!role) {
     noteFail(ip);
     await new Promise((r) => setTimeout(r, 800));
@@ -53,7 +57,7 @@ export default async function handler(req, res) {
   }
   fails.delete(ip);
   const token = await createToken(
-    { r: role, n: cleanName, exp: Date.now() + SIXTY_DAYS_S * 1000 },
+    { r: role, n: cleanName, ...(room ? { room } : {}), exp: Date.now() + SIXTY_DAYS_S * 1000 },
     process.env.SESSION_SECRET
   );
   res.setHeader(

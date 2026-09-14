@@ -6,7 +6,7 @@ import { sanitizeImport, importEvents, importFile, mergeImport } from '../lib/im
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
 import { createStateStore, applyVersionEvent, applyShot, applyMapMeta, labelKey } from '../lib/state.js';
-import { sessionFromHeaders } from '../lib/session.js';
+import { sessionFromHeaders, sessionAllowsRoom } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
 
 /* Storage model (v2):
@@ -51,6 +51,8 @@ export default async function handler(req, res) {
   );
   if (!session) return res.status(401).json({ error: 'Not authenticated' });
   const room = roomFromReq(req);
+  // Signed in for one room is not signed in for the rest of them.
+  if (!sessionAllowsRoom(session, room)) return res.status(401).json({ error: 'Not authenticated for this room' });
   const root = room ? `rooms/${room}/` : '';
   const role = session.r;
   // Author identity comes from the signed session (set at login), never from

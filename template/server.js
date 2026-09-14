@@ -28,7 +28,7 @@ import { randomBytes, webcrypto } from 'node:crypto';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
-const { createToken, sessionFromHeaders } = await import('./lib/session.js');
+const { createToken, sessionFromHeaders, sessionAllowsRoom, roomPasswords, roleFor } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
 const { clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
@@ -211,19 +211,22 @@ async function apiLogin(req, res) {
   const body = (await readBody(req, res)) || {};
   const cleanName = clean(body.name, MAX_NAME);
   if (!cleanName) return json(res, 400, { error: 'Missing name' });
-  const password = body.password;
-  const role =
-    password && password === SECRETS.designerPassword
-      ? 'designer'
-      : password && password === SECRETS.clientPassword
-        ? 'client'
-        : null;
+  // The room is decided here, not later: the token is minted for it, and a
+  // room with its own passwords is not opened by the deployment-wide pair.
+  const room = roomFromReq(req);
+  const role = roleFor(
+    body.password,
+    roomPasswords(
+      { designer: SECRETS.designerPassword, client: SECRETS.clientPassword, perRoom: process.env.ROOM_PASSWORDS },
+      room
+    )
+  );
   if (!role) {
     await new Promise((r) => setTimeout(r, 800));
     return json(res, 401, { error: 'Wrong password' });
   }
   const token = await createToken(
-    { r: role, n: cleanName, exp: Date.now() + SIXTY_DAYS_S * 1000 },
+    { r: role, n: cleanName, ...(room ? { room } : {}), exp: Date.now() + SIXTY_DAYS_S * 1000 },
     SECRETS.sessionSecret
   );
   setSessionCookie(req, res, token, SIXTY_DAYS_S);
@@ -581,6 +584,12 @@ const server = http.createServer(async (req, res) => {
       SECRETS.sessionSecret
     );
 
+    // Signed in for one room is not signed in for the rest of them.
+    if (pathname === '/api/comments' || pathname === '/api/file') {
+      if (session && !sessionAllowsRoom(session, roomFromReq(req))) {
+        return json(res, 401, { error: 'Not authenticated for this room' });
+      }
+    }
     if (pathname === '/api/comments') {
       if (!session) return json(res, 401, { error: 'Not authenticated' });
       return await apiComments(req, res, session);
