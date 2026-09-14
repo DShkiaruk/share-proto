@@ -19,6 +19,29 @@ The `template/` next to this file already contains the whole system — auth mid
 
 If the user didn't say, default to Vercel and mention the other two in one line.
 
+### Where the comments live — decide this at install time, not after
+
+The page and the comments can be hosted apart, and on the free tiers they
+should be. Vercel's Hobby plan includes **2,000 Blob advanced operations per
+month, counted across the whole account, not per store** — and an upload is
+one, a `list()` is one, and so is browsing the store in the dashboard. This
+tool spends roughly **two of them per comment, plus one per picture and per
+newly learned transition**, which works out at about four prototype reviews a
+month for an entire account. Past that the store is **suspended**: not
+throttled, not read-only — comments stop loading, and the room cannot even be
+exported until it is lifted (Vercel says 30 days; there are reports of it
+needing support to clear).
+
+So, for anything that will see real review traffic, put the comments on a
+**Cloudflare Worker** (free plan: Durable Objects with SQLite, 100,000
+requests and 100,000 written rows **per day**) and keep the page wherever it
+already is. That is Embed mode pointed at your own page — see "Cloudflare
+Worker as the comments host", then "Embed mode" for the one tag it adds.
+
+Vercel Blob is still the right answer for a prototype shown to one or two
+people, or a review that lasts a week. Say which one you are setting up and
+why, in one line, rather than choosing silently.
+
 ## Input cases — pick by what the user has
 
 - **A. Local HTML file** (prototype not online yet): follow all steps below.
@@ -91,6 +114,34 @@ contract against a local `wrangler dev`, and `npm run e2e:worker` runs the
 embed spec — the real overlay on a foreign page — against it. On the
 deployed host, open `/demo`: a fake screen with the overlay attached, so the
 client can try commenting before any PR carries the tag.
+
+### Moving a room that already exists
+
+Comments already left somewhere else — a Vercel deployment running out of
+quota, a local server, another Worker room — move across with their authors,
+times, numbers, statuses, replies, reactions, trails, the theme each was left
+in, the pictures and the learned map:
+
+```bash
+node scripts/move-room.mjs \
+  --from https://<old-deployment> --from-password <team password> \
+  --to   https://<worker-host>    --to-password   <team password> --to-room <name>
+```
+
+Add `--dry-run` first: it reads the source and prints what it found without
+sending anything. The move only reads from the source, so the old link keeps
+working while the new one is checked — switch the overlay tag over afterwards.
+It is idempotent (the target skips threads it already has), so an interrupted
+transfer is resumed by running the same command again, and it reports anything
+that did not arrive rather than claiming success.
+
+`bash scripts/move-smoke.sh` proves the whole path on two real servers before
+you point it at anything that matters.
+
+**If the source store is already suspended**, nothing can be exported from it —
+that is the one case where the quota has to be lifted first (a Pro trial is the
+fastest; support is the free route). Build the target and run the move the
+moment it answers.
 
 Ten wrong passwords from one address lock it out for ten minutes (the counter
 lives in a Durable Object, so it holds across the whole worker — the other two

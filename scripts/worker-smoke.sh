@@ -124,6 +124,13 @@ THEME='{"action":"create","text":"left in the dark","screen":"Home","screenLabel
 check "$(api "$TEAM_T" -d "$THEME" "$D/api/comments?room=pr-7" | jq_ 't=d.get("thread",{}).get("theme") or {}; print(t.get("mode"), (t.get("marks") or {}).get("html",{}).get("attrs",{}).get("data-theme"))')" "dark dark" "a comment remembers the theme it was left in"
 check "$(api "$TEAM_T" -d '{"action":"create","text":"bad theme","screen":"Home","screenLabel":"Home","theme":{"mode":"neon"}}' "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("theme"))')" "None" "a theme it cannot use is dropped, not stored"
 
+# A room can be moved in: verbatim, designer-only, and idempotent.
+IMP='{"action":"import","threads":[{"id":"66666666-6666-4666-8666-666666666666","createdAt":1000,"authorRole":"client","author":"Olena","screen":"Home","screenLabel":"Home","n":9001,"messages":[{"author":"Olena","role":"client","text":"moved in","at":1000}]}]}'
+check "$(api "$TEAM_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"
+check "$(api "$TEAM_T" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="66666666-6666-4666-8666-666666666666"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 9001 1000" "with its author, number and time"
+check "$(api "$TEAM_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("skipped"))')" "1" "and a second run adds nothing"
+check "$(api "$CLIENT_T" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("error"))')" "Not allowed" "a client cannot move a room in"
+
 # A comment learns the way back to its state, once.
 LEARN=$(api "$TEAM_T" -d "$NEW" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("id",""))')
 TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#row","t":"button","txt":"Acme"},"txt":"Acme"}]}'

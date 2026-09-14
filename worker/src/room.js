@@ -16,18 +16,19 @@
    caps key+value at 2 MB, and an image is capped at 1.5 MB by lib/media.js. */
 
 import {
-  clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme,
+  clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme,
   applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../../template/lib/threads.js';
 import { applyShot, applyMapMeta, applyVersionEvent, labelKey } from '../../template/lib/state.js';
 import { parseImages, parseImageDataUrl } from '../../template/lib/media.js';
+import { sanitizeImport, importFile, mergeImport } from '../../template/lib/importing.js';
 
 const MAX_TEXT = 3000;
 const NAV_CAP = 500;
 const MAX_SHOTS = 200;
 const MAX_VERSIONS = 100;
 const VERSION_ID = /^[A-Za-z0-9"/_.:-]{1,80}$/;
-const TID_RE = /^[a-f0-9-]{36}$/;
+const TID_RE = THREAD_ID;
 const SAFE_FILE = /^(previews|attach|shots)\/[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}\.(jpe?g|png|webp)$/;
 const MIME_IMG = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
@@ -290,6 +291,51 @@ export class Room {
       return ok({ thread: this.threads.find((t) => t.id === tid) });
     }
 
+    /* Moving a room in from another deployment. Idempotent by thread id, so a
+       transfer can be retried or resumed without doubling the room, and the
+       pictures come one per request because a room's media dwarfs any body
+       limit. Designer only: this writes other people's names onto comments. */
+    if (action === 'import') {
+      if (role !== 'designer') return err(403, 'Not allowed');
+      const file = importFile(body.file);
+      if (file) {
+        const img = parseImageDataUrl(file.image);
+        if (!img) return err(400, 'Bad image');
+        if (!this.fits(img.buf.byteLength)) return err(507, 'Room storage full');
+        await this.putFile(file.path, img.buf);
+        return ok({ ok: true, file: file.path });
+      }
+      const data = sanitizeImport(body);
+      const have = new Set(this.threads.map((t) => t.id));
+      const fresh = data.threads.filter((t) => !have.has(t.id));
+      const merged = mergeImport({ nav: this.nav, versions: this.versions, shots: this.shots, mapmeta: this.mapmeta }, data);
+      for (const [key, edge] of Object.entries(merged.nav)) {
+        if (JSON.stringify(this.nav[key]) !== JSON.stringify(edge)) await this.s.put(`n:${key}`, edge);
+      }
+      this.nav = merged.nav;
+      if (JSON.stringify(this.versions) !== JSON.stringify(merged.versions)) {
+        this.versions = merged.versions;
+        await this.s.put('versions', this.versions);
+      }
+      if (JSON.stringify(this.shots) !== JSON.stringify(merged.shots)) {
+        this.shots = merged.shots;
+        await this.s.put('shots', this.shots);
+      }
+      if (JSON.stringify(this.mapmeta) !== JSON.stringify(merged.mapmeta)) {
+        this.mapmeta = merged.mapmeta;
+        await this.s.put('mapmeta', this.mapmeta);
+      }
+      const before = this.threads;
+      this.threads = assignNumbers([...before, ...fresh]);
+      await this.setMeta({ maxN: Math.max(this.meta.maxN || 0, 0, ...this.threads.map((t) => t.n || 0)) });
+      await this.saveChanged(before);
+      return ok({
+        imported: fresh.length,
+        skipped: data.threads.length - fresh.length,
+        threads: this.threads.length,
+      });
+    }
+
     if (action === 'shot') {
       if (role !== 'designer') return err(403, 'Not allowed');
       const label = clean(body.label, 120);
@@ -302,9 +348,10 @@ export class Room {
       await this.putFile(rel, img.buf);
       this.shots = applyShot(this.shots, { label, path: rel });
       await this.s.put('shots', this.shots);
-      // The shot this one replaces is nobody's now (one borrowed from a comment
-      // preview belongs to its thread, so it is left alone).
-      if (previous && previous.startsWith('shots/')) await this.delFile(previous);
+      // The shot this one replaces is nobody's now — unless a comment donated it
+      // and still points at it, in which case deleting it would leave that
+      // thread with a broken picture.
+      if (previous && !this.threads.some((t) => t.preview === previous)) await this.delFile(previous);
       return ok({ path: rel });
     }
 
@@ -352,17 +399,22 @@ export class Room {
       if (!own && role !== 'designer') return err(403, 'Not allowed');
       const img = parseImageDataUrl(body.image);
       if (!img) return err(400, 'Bad image');
-      // ×2: the picture may be copied into an empty map slot below.
-      if (!this.fits(img.buf.byteLength * 2)) return err(507, 'Room storage full');
-      const rel = `previews/${tid}/${pad(now)}.${img.ext}`;
+      if (!this.fits(img.buf.byteLength)) return err(507, 'Room storage full');
+      // One picture, not two. A screen with no shot yet takes this one as its own:
+    // storing it under shots/ means the client can see it on the map (a previews/
+    // path is gated on the thread), the thread points at the same object, and
+    // deleting the thread — which purges previews/<tid>/ — leaves the map intact.
+    // Writing it twice cost an extra upload on every first comment of a screen,
+    // and on Vercel's free tier uploads are the resource that runs out.
+      const label = thread.screenLabel;
+      const donates = Boolean(label && !this.shots[label]);
+      const rel = donates
+        ? `shots/${labelKey(label)}/${pad(now)}-${uuid().slice(0, 8)}.${img.ext}`
+        : `previews/${tid}/${pad(now)}.${img.ext}`;
       await this.putFile(rel, img.buf);
       thread.preview = rel;
-      // A screen with no shot borrows this picture as its own copy under shots/:
-      // a previews/ path is gated on the thread and would 404 for the client.
-      if (thread.screenLabel && !this.shots[thread.screenLabel]) {
-        const shotRel = `shots/${labelKey(thread.screenLabel)}/${pad(now)}-${uuid().slice(0, 8)}.${img.ext}`;
-        await this.putFile(shotRel, img.buf);
-        this.shots = applyShot(this.shots, { label: thread.screenLabel, path: shotRel, from: 'preview' });
+      if (donates) {
+        this.shots = applyShot(this.shots, { label, path: rel, from: 'preview' });
         await this.s.put('shots', this.shots);
       }
       await this.saveThread(tid);

@@ -1,7 +1,8 @@
 import {
-  clean, canSee, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
+  clean, canSee, THREAD_ID, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
+  nextNumber, assignNumbers, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
 } from '../lib/threads.js';
+import { sanitizeImport, importEvents, importFile, mergeImport } from '../lib/importing.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
 import * as storage from '../lib/storage.js';
 import { createStateStore, applyVersionEvent, applyShot, applyMapMeta, labelKey } from '../lib/state.js';
@@ -176,6 +177,42 @@ export default async function handler(req, res) {
     return res.status(200).json({ thread: state.threads.find((t) => t.id === tid) });
   }
 
+  /* Moving a room in from another deployment. Idempotent by thread id, so a
+     transfer can be retried or resumed without doubling the room, and the
+     pictures come one per request because a room's media dwarfs any body
+     limit. Designer only: this writes other people's names onto comments. */
+  if (action === 'import') {
+    if (role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
+    const file = importFile(body.file);
+    if (file) {
+      const img = parseImageDataUrl(file.image);
+      if (!img) return res.status(400).json({ error: 'Bad image' });
+      await storage.putFile(`${root}${file.path}`, img.buf, img.contentType);
+      return res.status(200).json({ ok: true, file: file.path });
+    }
+    const data = sanitizeImport(body);
+    const { state: cur } = await store.loadState(root);
+    const have = new Set(cur.threads.map((t) => t.id));
+    const fresh = { ...data, threads: data.threads.filter((t) => !have.has(t.id)) };
+    // The document here is derived: without the events a later rebuild would
+    // erase everything this import just wrote.
+    for (const e of importEvents(fresh, root)) await storage.appendEvent(e.pathname, e.data);
+    const { state, path } = await mutateOrDefer(cur, (s) => {
+      const threads = assignNumbers([...s.threads, ...fresh.threads]);
+      return {
+        ...mergeImport(s, fresh),
+        threads,
+        maxN: Math.max(s.maxN || 0, 0, ...threads.map((t) => t.n || 0)),
+      };
+    });
+    res.setHeader('X-Store-Path', path);
+    return res.status(200).json({
+      imported: fresh.threads.length,
+      skipped: data.threads.length - fresh.threads.length,
+      threads: state.threads.length,
+    });
+  }
+
   // Map: screen shots and designer metadata carry no thread.
   if (action === 'shot') {
     if (role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
@@ -193,7 +230,12 @@ export default async function handler(req, res) {
     const { path } = await mutateOrDefer(shotBase, (s) => ({ shots: applyShot(s.shots, { label, path: rel }) }));
     // The shot this one replaces is nobody's now (a preview-sourced one belongs
     // to its thread, so it is left alone).
-    if (previous && previous.startsWith('shots/')) await storage.delAll([`${root}${previous}`]);
+    // The shot this one replaces is nobody's now — unless a comment donated it
+    // and still points at it, in which case deleting it would leave that
+    // thread with a broken picture.
+    if (previous && !(shotBase.threads || []).some((t) => t.preview === previous)) {
+      await storage.delAll([`${root}${previous}`]);
+    }
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ path: rel });
   }
@@ -235,7 +277,7 @@ export default async function handler(req, res) {
   }
 
   const tid = String(body.threadId || '');
-  if (!/^[a-f0-9-]{36}$/.test(tid)) return res.status(404).json({ error: 'Thread not found' });
+  if (!THREAD_ID.test(tid)) return res.status(404).json({ error: 'Thread not found' });
   const { state: cur } = await store.loadState(root);
   const existing = cur.threads.find((t) => t.id === tid);
   if (!existing || !canSee(role, existing)) return res.status(404).json({ error: 'Thread not found' });
@@ -245,22 +287,25 @@ export default async function handler(req, res) {
     if (!own && role !== 'designer') return res.status(403).json({ error: 'Not allowed' });
     const img = parseImageDataUrl(body.image);
     if (!img) return res.status(400).json({ error: 'Bad image' });
-    const rel = `previews/${tid}/${ts(now)}.${img.ext}`;
+    // One picture, not two. A screen with no shot yet takes this one as its own:
+    // storing it under shots/ means the client can see it on the map (a previews/
+    // path is gated on the thread), the thread points at the same object, and
+    // deleting the thread — which purges previews/<tid>/ — leaves the map intact.
+    // Writing it twice cost an extra upload on every first comment of a screen,
+    // and on Vercel's free tier uploads are the resource that runs out.
+    const label = existing.screenLabel;
+    const donates = Boolean(label && !(cur.shots || {})[label]);
+    const rel = donates
+      ? `shots/${labelKey(label)}/${ts(now)}-${uuid().slice(0, 8)}.${img.ext}`
+      : `previews/${tid}/${ts(now)}.${img.ext}`;
     await storage.putFile(`${root}${rel}`, img.buf, img.contentType);
     await storage.appendEvent(eventPath(tid), { type: 'state', at: now, preview: rel });
-    // A screen with no map shot yet borrows this picture — as its own copy under
-    // shots/, because a previews/ path is gated on the thread's visibility and
-    // would 404 for the client (and vanish when the thread is deleted).
-    const label = existing.screenLabel;
-    let shotRel = null;
-    if (label && !(cur.shots || {})[label]) {
-      shotRel = `shots/${labelKey(label)}/${ts(now)}-${uuid().slice(0, 8)}.${img.ext}`;
-      await storage.putFile(`${root}${shotRel}`, img.buf, img.contentType);
-      await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: shotRel, at: now, from: 'preview' });
+    if (donates) {
+      await storage.appendEvent(`${root}shotlog/${ts(now)}-${uuid()}.json`, { label, path: rel, at: now, from: 'preview' });
     }
     const { path } = await mutateOrDefer(cur, (s) => ({
       threads: applyPreview(s.threads, tid, rel),
-      shots: shotRel ? applyShot(s.shots, { label, path: shotRel, from: 'preview' }) : s.shots,
+      shots: donates ? applyShot(s.shots, { label, path: rel, from: 'preview' }) : s.shots,
     }));
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({ preview: rel });

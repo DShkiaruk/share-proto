@@ -8,6 +8,11 @@
 
 export const clean = (str, max) => String(str || '').trim().slice(0, max);
 
+// Every thread-scoped action checks this before looking anything up, so an
+// import that accepted a wider shape could create threads nobody could reply
+// to, resolve or delete. One definition, used by all three servers.
+export const THREAD_ID = /^[a-f0-9-]{36}$/;
+
 export const STATUSES = ['open', 'progress', 'done', 'wont'];
 export const KINDS = ['bug', 'question', 'idea'];
 export const EMOJI = ['👍', '✅', '❓', '👀'];

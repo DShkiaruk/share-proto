@@ -4,7 +4,8 @@
   'use strict';
 
   const PASTELS = ['#dbffd5', '#d5edff', '#ffd4b1', '#f4d5ff', '#fff3c4', '#ffd5d5'];
-  const POLL_MS = 25000;
+  const POLL_MS = 25000; // how soon after a change we look again
+  const POLL_MAX_MS = 4 * 60 * 1000; // how rarely we look when nothing happens
 
   /* ---------- embed mode ----------
      When this script is served from a different origin than the page it runs
@@ -1004,6 +1005,7 @@
 
   let inflight = null;
   let lastSig = '';
+  let pollEvery = POLL_MS;
   let lastMapSig = { sig: '', map: '' };
   let legacyNoticeShown = false;
   function refresh() {
@@ -1043,7 +1045,10 @@
             legacyNoticeShown = true;
             toast('This comments server is older than the overlay — statuses, pictures and the map are off here', 8000);
           }
-          if (sig !== lastSig) {
+          const moved = sig !== lastSig;
+          // Back off while the room is quiet; snap back the instant it is not.
+          pollEvery = moved ? POLL_MS : Math.min(POLL_MAX_MS, Math.round(pollEvery * 1.6));
+          if (moved) {
             lastSig = sig;
             renderAll();
           }
@@ -3630,12 +3635,32 @@
     passive: true,
   });
 
+  /* Every poll is a read, and on a free storage tier reads are a budget: a tab
+     left open at a fixed 25 s spends about a thousand of them in a working day,
+     nearly all of them learning that nothing changed. So "nothing changed" is
+     itself information — ease off, and come straight back the moment it does.
+     A reviewer who is actually reviewing never notices: their own actions and
+     any incoming change reset the pace. */
+  let pollTimer = null;
+  function schedulePoll(delay = pollEvery) {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(async () => {
+      if (document.visibilityState === 'visible') await refresh();
+      schedulePoll();
+    }, delay);
+  }
+  function pollSoon() {
+    pollEvery = POLL_MS;
+    schedulePoll(POLL_MS);
+  }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') refresh();
+    if (document.visibilityState !== 'visible') return;
+    refresh();
+    pollSoon();
   });
-  setInterval(() => {
-    if (document.visibilityState === 'visible') refresh();
-  }, POLL_MS);
+  // Someone acting on the page is someone who may be about to act on a comment.
+  document.addEventListener('pointerdown', () => (pollEvery = POLL_MS), { capture: true, passive: true });
+  schedulePoll();
 
   // Long-lived tabs are the #1 source of "it doesn't work" reports: they keep
   // running an outdated overlay. Compare our asset's ETag every 30 min and
@@ -3759,7 +3784,14 @@
 
   // Read-only automation hook: the map crawler reads the label through it and
   // tests inspect state. Never used by the overlay itself.
-  window.__fp = { version: 2, label: screenLabel, get state() { return state; } };
+  // Debug surface: also what the tests measure the polling budget with.
+  window.__fp = {
+    version: 2,
+    label: screenLabel,
+    refresh,
+    get pollEvery() { return pollEvery; },
+    get state() { return state; },
+  };
 
   refresh().then(() => {
     syncLocalEdges();

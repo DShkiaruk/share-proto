@@ -14,6 +14,7 @@ const projects = [
   { name: 'local-embed', testMatch: /embed\.spec\.mjs/, use: local, dependencies: ['local-map'] },
   // Last: it leaves two comments behind, so no earlier count is disturbed.
   { name: 'local-theme', testMatch: /theme\.spec\.mjs/, use: local, dependencies: ['local-embed'] },
+  { name: 'local-budget', testMatch: /budget\.spec\.mjs/, use: local, dependencies: ['local-theme'] },
 ];
 if (process.env.LAB_URL) {
   projects.push({

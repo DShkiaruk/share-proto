@@ -167,13 +167,35 @@ test('deleting a thread purges its pictures and gives the space back', async () 
   const t = (await create(r, 'client', 'Cliff', { images: [PNG], screenLabel: 'Home' })).payload.thread;
   await r.post('client', 'Cliff', { action: 'preview', threadId: t.id, image: PNG });
   assert.ok(r.meta.bytes > 0);
-  assert.equal([...r.s.map.keys()].filter((k) => k.startsWith('f:')).length, 3); // attach + preview + borrowed shot
+  // attach + one picture doing double duty: the comment's preview IS the
+  // screen's shot. It used to be stored twice, which cost an upload and the
+  // bytes on every first comment of a screen.
+  assert.equal([...r.s.map.keys()].filter((k) => k.startsWith('f:')).length, 2);
+  const thread = r.threads.find((x) => x.id === t.id);
+  assert.equal(thread.preview, r.shots.Home, 'the thread points at the screen shot itself');
 
   await r.post('client', 'Cliff', { action: 'delete', threadId: t.id });
   assert.equal(r.s.map.has(`t:${t.id}`), false);
   const left = [...r.s.map.keys()].filter((k) => k.startsWith('f:'));
   // The map shot survives: it belongs to the screen, not to the thread.
   assert.deepEqual(left, [`f:${r.shots.Home}`]);
+});
+
+test('replacing a screen shot keeps a picture a comment still points at', async () => {
+  const r = room();
+  const t = (await create(r, 'designer', 'Dee', { screenLabel: 'Home' })).payload.thread;
+  await r.post('designer', 'Dee', { action: 'preview', threadId: t.id, image: PNG });
+  const donated = r.shots.Home;
+  assert.equal(r.threads.find((x) => x.id === t.id).preview, donated);
+
+  await r.post('designer', 'Dee', { action: 'shot', label: 'Home', image: PNG });
+  assert.notEqual(r.shots.Home, donated, 'the screen took the new picture');
+  assert.ok(r.s.map.has(`f:${donated}`), 'but the comment is not left with a broken one');
+
+  // A shot nobody points at is freed as before.
+  const plain = r.shots.Home;
+  await r.post('designer', 'Dee', { action: 'shot', label: 'Home', image: PNG });
+  assert.equal(r.s.map.has(`f:${plain}`), false);
 });
 
 test('a full room refuses new pictures instead of growing without limit', async () => {
@@ -303,4 +325,78 @@ test('a thread learns the way back once, and only once', async () => {
   });
   assert.equal(again.payload.thread.trail[0].txt, 'Acme');
   assert.equal((await r.post('designer', 'Dee', { action: 'trail', threadId: t.id, trail: [] })).status, 400);
+});
+
+// Moving a room here from a Vercel deployment is the reason this action exists,
+// and the thing that would make the move worthless is arriving with everyone's
+// comments re-authored by whoever ran it.
+const EXPORT = {
+  threads: [
+    {
+      id: '77777777-7777-4777-8777-777777777777',
+      createdAt: 1000,
+      authorRole: 'client',
+      author: 'Olena',
+      screen: 'home',
+      screenLabel: 'Home',
+      anchor: { path: 'h1', t: 'h1', txt: 'Home' },
+      n: 7,
+      kind: 'bug',
+      history: [{ at: 1500, status: 'progress', note: null, author: 'Dima' }],
+      messages: [
+        { author: 'Olena', role: 'client', text: 'the label is cut off', at: 1000 },
+        { author: 'Dima', role: 'designer', text: 'on it', at: 1200 },
+      ],
+    },
+  ],
+  nav: { 'Home>Settings': { anchor: { path: 'a', t: 'a', txt: 'Settings' }, at: 900 } },
+  shots: { Home: 'shots/home/1-a.jpg' },
+  mapmeta: { aliases: { Home: 'Start' }, hidden: [] },
+};
+
+test('an imported room arrives with its authors, times and numbers intact', async () => {
+  const r = room();
+  const res = await r.post('designer', 'Mover', { action: 'import', ...EXPORT });
+  assert.equal(res.status, 200);
+  assert.equal(res.payload.imported, 1);
+
+  const [t] = r.threads;
+  assert.equal(t.author, 'Olena', 'not the person who ran the move');
+  assert.equal(t.authorRole, 'client');
+  assert.equal(t.createdAt, 1000, 'not today');
+  assert.equal(t.n, 7, 'the number people refer to on a call');
+  assert.equal(t.status, 'progress');
+  assert.equal(t.kind, 'bug');
+  assert.deepEqual(t.messages.map((m) => [m.author, m.at]), [['Olena', 1000], ['Dima', 1200]]);
+  assert.deepEqual(r.nav['Home>Settings'].anchor.txt, 'Settings');
+  assert.equal(r.shots.Home, 'shots/home/1-a.jpg');
+  assert.equal(r.mapmeta.aliases.Home, 'Start');
+  assert.ok(r.s.map.has('t:77777777-7777-4777-8777-777777777777'), 'and it is persisted, not only in memory');
+
+  // A resumed or retried transfer must not double the room.
+  const again = await r.post('designer', 'Mover', { action: 'import', ...EXPORT });
+  assert.equal(again.payload.imported, 0);
+  assert.equal(again.payload.skipped, 1);
+  assert.equal(r.threads.length, 1);
+
+  // A new comment made afterwards continues from the imported numbering.
+  const next = await create(r, 'designer', 'Dee');
+  assert.equal(next.payload.thread.n, 8);
+});
+
+test('only a designer may import, and pictures come one at a time', async () => {
+  const r = room();
+  assert.equal((await r.post('client', 'Cliff', { action: 'import', ...EXPORT })).status, 403);
+  assert.equal(r.threads.length, 0);
+
+  const file = await r.post('designer', 'Mover', {
+    action: 'import',
+    file: { path: 'shots/home/1-a.jpg', image: PNG },
+  });
+  assert.equal(file.status, 200);
+  assert.ok(r.s.map.has('f:shots/home/1-a.jpg'));
+  // A path outside the room's own media is not a path.
+  const bad = await r.post('designer', 'Mover', { action: 'import', file: { path: '../escape.jpg', image: PNG } });
+  assert.equal(bad.payload.imported, 0, 'it falls through to an empty import rather than writing');
+  assert.equal(r.s.map.has('f:../escape.jpg'), false);
 });

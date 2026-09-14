@@ -30,9 +30,10 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
+const { clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
+const { sanitizeImport, importFile, mergeImport } = await import('./lib/importing.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -326,6 +327,33 @@ async function apiComments(req, res, session) {
     return json(res, 200, { thread: S.threads.find((t) => t.id === thread.id) });
   }
 
+  /* Moving a room in from another deployment. Idempotent by thread id, so a
+     transfer can be retried or resumed without doubling the room, and the
+     pictures come one per request because a room's media dwarfs any body
+     limit. Designer only: this writes other people's names onto comments. */
+  if (action === 'import') {
+    if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
+    const file = importFile(body.file);
+    if (file) {
+      const img = parseImageDataUrl(file.image);
+      if (!img) return json(res, 400, { error: 'Bad image' });
+      await putFileLocal(room, file.path, img.buf);
+      return json(res, 200, { ok: true, file: file.path });
+    }
+    const data = sanitizeImport(body);
+    const have = new Set(S.threads.map((t) => t.id));
+    const fresh = data.threads.filter((t) => !have.has(t.id));
+    Object.assign(S, mergeImport(S, data));
+    S.threads = assignNumbers([...S.threads, ...fresh]);
+    S.maxN = Math.max(S.maxN || 0, 0, ...S.threads.map((t) => t.n || 0));
+    await persist();
+    return json(res, 200, {
+      imported: fresh.length,
+      skipped: data.threads.length - fresh.length,
+      threads: S.threads.length,
+    });
+  }
+
   if (action === 'shot') {
     if (role !== 'designer') return json(res, 403, { error: 'Not allowed' });
     const label = clean(body.label, 120);
@@ -338,7 +366,10 @@ async function apiComments(req, res, session) {
     const rel = `shots/${labelKey(label)}/${String(now).padStart(14, '0')}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     S.shots = applyShot(S.shots, { label, path: rel });
-    if (previous && previous.startsWith('shots/')) {
+    // The shot this one replaces is nobody's now — unless a comment donated it
+    // and still points at it, in which case deleting it would leave that
+    // thread with a broken picture.
+    if (previous && !(S.threads || []).some((t) => t.preview === previous)) {
       await fsp.rm(path.join(FILES, room ? `rooms/${room}/` : '', previous), { force: true }).catch(() => {});
     }
     await persist();
@@ -375,7 +406,7 @@ async function apiComments(req, res, session) {
   }
 
   const tid = String(body.threadId || '');
-  if (!/^[a-f0-9-]{36}$/.test(tid)) return json(res, 404, { error: 'Thread not found' });
+  if (!THREAD_ID.test(tid)) return json(res, 404, { error: 'Thread not found' });
   const thread = S.threads.find((t) => t.id === tid);
   if (!thread || !canSee(role, thread)) {
     return json(res, 404, { error: 'Thread not found' });
@@ -386,16 +417,20 @@ async function apiComments(req, res, session) {
     if (!own && role !== 'designer') return json(res, 403, { error: 'Not allowed' });
     const img = parseImageDataUrl(body.image);
     if (!img) return json(res, 400, { error: 'Bad image' });
-    const rel = `previews/${tid}/${String(now).padStart(14, '0')}.${img.ext}`;
+    // One picture, not two. A screen with no shot yet takes this one as its own:
+    // storing it under shots/ means the client can see it on the map (a previews/
+    // path is gated on the thread), the thread points at the same object, and
+    // deleting the thread — which purges previews/<tid>/ — leaves the map intact.
+    // Writing it twice cost an extra upload on every first comment of a screen,
+    // and on Vercel's free tier uploads are the resource that runs out.
+    const label = thread.screenLabel;
+    const donates = Boolean(label && !(S.shots || {})[label]);
+    const rel = donates
+      ? `shots/${labelKey(label)}/${String(now).padStart(14, '0')}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`
+      : `previews/${tid}/${String(now).padStart(14, '0')}.${img.ext}`;
     await putFileLocal(room, rel, img.buf);
     thread.preview = rel;
-    // A screen with no shot borrows this picture as its own copy under shots/:
-    // a previews/ path is gated on the thread and would 404 for the client.
-    if (thread.screenLabel && !(S.shots || {})[thread.screenLabel]) {
-      const shotRel = `shots/${labelKey(thread.screenLabel)}/${String(now).padStart(14, '0')}-${crypto.randomUUID().slice(0, 8)}.${img.ext}`;
-      await putFileLocal(room, shotRel, img.buf);
-      S.shots = applyShot(S.shots, { label: thread.screenLabel, path: shotRel, from: 'preview' });
-    }
+    if (donates) S.shots = applyShot(S.shots, { label, path: rel, from: 'preview' });
     await persist();
     return json(res, 200, { preview: rel });
   }

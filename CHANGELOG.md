@@ -126,3 +126,38 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - Sidebar empty states name the filter you are actually looking at.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
+
+## v2.3 — 2026-09-14
+
+A room can move between deployments, and the tool stops spending the free tier
+it was running out of.
+
+### Moving a room
+- New action **`import`** on all three servers: threads arrive verbatim —
+  author, side, time, number, status history, kind, replies, reactions, trail,
+  the theme each was left in, the pictures, the learned map and the screen
+  names. Replaying an export through the ordinary actions would have made every
+  comment look written by whoever ran the move, today.
+- `scripts/move-room.mjs` moves a room between any two deployments in either
+  direction (Vercel → a Cloudflare Worker, a Worker → local, room → room).
+  Reads only from the source, so the old link keeps working while the new one is
+  checked; idempotent, so an interrupted transfer resumes; reports what did not
+  arrive instead of claiming success.
+- `scripts/move-smoke.sh` proves it on two real servers — the local edition and
+  a Worker under `wrangler dev` — comparing what arrived against what was sent.
+- The round trip is pinned by `tests/unit/importing.test.mjs`: events produced
+  for a thread must fold back through `assemble()` into that same thread.
+
+### What the tool costs to run
+Vercel's Hobby plan includes 2,000 Blob write-class operations a month **across
+an account, not per store**, and suspends the store past it. Two projects hit
+that during one review week.
+- A comment's picture is **stored once, not twice**. A screen with no picture
+  yet takes the comment's own preview as its shot instead of receiving a copy —
+  one upload and half the bytes on every first comment of a screen. Replacing a
+  screen shot now keeps a picture a comment still points at.
+- **Polling backs off** when a room is quiet — 25 s up to 4 minutes — and snaps
+  back to 25 s the moment anything changes or anyone touches the page. A tab
+  left open used to spend about a thousand reads in a working day.
+- `SKILL.md` now decides where comments live at install time, with the numbers
+  for both free tiers, instead of defaulting to the one that runs out.
