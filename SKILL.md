@@ -42,6 +42,12 @@ Vercel Blob is still the right answer for a prototype shown to one or two
 people, or a review that lasts a week. Say which one you are setting up and
 why, in one line, rather than choosing silently.
 
+**The Cloudflare path has its own runbook: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).**
+It starts from a machine with nothing installed and no Cloudflare account, names
+what the person has to do in their own browser (and the words to hand them), and
+ends with a verified deployment. Follow it instead of improvising — it exists
+because every step that gets skipped fails later, further from the cause.
+
 ## Input cases — pick by what the user has
 
 - **A. Local HTML file** (prototype not online yet): follow all steps below.
@@ -180,6 +186,18 @@ numbers and the learned navigation are kept.
 
 ### 1. Preflight
 
+Run the check rather than reading down a list — it names what is missing and the
+exact fix, including the steps the person has to do themselves:
+
+```bash
+bash <skill-dir>/scripts/preflight.sh            # both paths
+bash <skill-dir>/scripts/preflight.sh --vercel   # page on Vercel only
+bash <skill-dir>/scripts/preflight.sh --worker   # comments on Cloudflare only
+```
+
+Work down its NEED lines in order and re-run until it says "Nothing is in the
+way". Everything below assumes it did.
+
 - Locate the HTML file (from the user's message; search `~/Downloads` if they gave just a name). Confirm it contains `</body>`.
 - **Node/npm**: `command -v npm` — if missing, try `brew install node` (macOS with Homebrew). No brew either → send the user to https://nodejs.org (LTS installer), wait, re-check. Don't proceed without npm.
 - **Vercel CLI**: `command -v vercel || npm i -g vercel`
@@ -196,6 +214,11 @@ numbers and the learned navigation are kept.
 python3 <skill-dir>/scripts/assemble.py "<prototype.html>" ~/<name>-share
 cd ~/<name>-share && npm install
 ```
+
+Putting the comments on a Cloudflare Worker instead of this deployment's Blob
+store is a flag here, not an edit afterwards — add
+`--comments https://<worker> --room <name>` and follow
+[docs/CLOUDFLARE.md](docs/CLOUDFLARE.md) for the Worker itself.
 
 The script copies the template, injects the overlay tag, fixes the viewport meta, and titles the login page from the prototype's `<title>`.
 

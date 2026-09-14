@@ -3,7 +3,9 @@
 // way (this caught public/screenshot.js — previews would never have loaded).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const root = new URL('../../', import.meta.url).pathname;
@@ -65,4 +67,78 @@ test('the Worker imports the shared rules instead of copying them', () => {
     assert.ok(index.includes(`../../template/lib/${mod}`), `worker/src/index.js no longer imports ${mod}`);
   }
   assert.equal(existsSync(join(root, 'worker/src/session.js')), false, 'the duplicated session module is back');
+});
+
+/* The Cloudflare runbook is executed by somebody else's assistant on a machine
+   we will never see, so the failure it must not have is naming something that
+   does not exist: a script, a secret the code never reads, an attribute the
+   overlay ignores. Prose cannot be run; this checks it against the code. */
+test('the Cloudflare runbook only names things that exist', () => {
+  const doc = read('docs/CLOUDFLARE.md');
+
+  for (const script of [...doc.matchAll(/`?(scripts\/[a-z-]+\.(?:sh|mjs|py))`?/g)].map((m) => m[1])) {
+    assert.ok(existsSync(join(root, script)), `CLOUDFLARE.md tells people to run ${script}, which is missing`);
+  }
+
+  // Every secret it tells them to set has to be one the Worker actually reads.
+  const worker = read('worker/src/index.js') + read('worker/src/room.js');
+  // The ones it tells them to set, and the ones it names in backticks — not
+  // every capitalised word (a shell variable in an example is neither).
+  const named = [
+    ...new Set([
+      ...[...doc.matchAll(/secret put ([A-Z][A-Z0-9_]+)/g)].map((m) => m[1]),
+      ...[...doc.matchAll(/`([A-Z][A-Z0-9_]{5,})`/g)].map((m) => m[1]),
+    ]),
+  ];
+  assert.ok(named.includes('DESIGNER_PASSWORD') && named.includes('ROOM_PASSWORDS'), `parser broke: ${named.join(', ')}`);
+  for (const v of named) {
+    assert.match(worker, new RegExp(`env\\.${v}\\b`), `CLOUDFLARE.md names ${v}, but the Worker never reads it`);
+  }
+
+  // The tag it hands over must be the one the overlay understands.
+  assert.match(doc, /data-room=/, 'the runbook stopped naming the room on the tag');
+  assert.match(read('template/public/overlay.js'), /getAttribute\('data-room'\)/, 'the overlay no longer reads data-room');
+
+  // And the preflight has to be the first thing, or the rest fails further from
+  // the cause than it should.
+  assert.match(doc, /preflight\.sh --worker/);
+  assert.match(read('SKILL.md'), /scripts\/preflight\.sh/, 'SKILL.md no longer sends the agent through the preflight');
+  assert.match(read('SKILL.md'), /docs\/CLOUDFLARE\.md/, 'SKILL.md no longer points at the Cloudflare runbook');
+});
+
+test('the preflight names a fix for everything it can refuse', () => {
+  const pre = read('scripts/preflight.sh');
+  // Every gap() call carries a second argument: the way out of it.
+  for (const [, call] of pre.matchAll(/\n\s*gap (["'].*)/g)) {
+    assert.ok(/["']\s+["']/.test(call), `a preflight check refuses without saying how to fix it: ${call.slice(0, 60)}`);
+  }
+  assert.match(pre, /dash\.cloudflare\.com\/sign-up/, 'the preflight stopped telling people where to make the account');
+  assert.match(pre, /wrangler login/, 'the preflight stopped telling people how to sign in');
+});
+
+/* The assembler is what every install goes through, so the choice of where
+   comments live has to be one of its inputs — a tag edited by hand afterwards
+   is the step people skip or get subtly wrong. */
+test('assemble can point a new project at a comments host from the start', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'share-proto-assemble-'));
+  const target = join(dir, 'acme-proto');
+  try {
+    execFileSync('python3', [
+      join(root, 'scripts/assemble.py'),
+      join(root, 'tests/fixtures/proto.html'),
+      target,
+      '--comments',
+      'https://comments.example.workers.dev/',
+    ]);
+    const html = readFileSync(join(target, 'public/index.html'), 'utf8');
+    assert.match(html, /<script src="https:\/\/comments\.example\.workers\.dev\/overlay\.js" data-room="acme-proto" defer>/);
+    assert.ok(!html.includes('src="/overlay.js"'), 'the local tag must not be there as well');
+
+    // Without it, nothing changes for the single-deployment case.
+    const plain = join(dir, 'plain');
+    execFileSync('python3', [join(root, 'scripts/assemble.py'), join(root, 'tests/fixtures/proto.html'), plain]);
+    assert.match(readFileSync(join(plain, 'public/index.html'), 'utf8'), /<script src="\/overlay\.js" defer>/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

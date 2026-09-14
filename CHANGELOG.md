@@ -177,3 +177,21 @@ two clients share a host.
   keep the deployment-wide pair.
 - Both smoke scripts check it now, and the embed spec reads a room the way a
   person does — by signing in to that room.
+
+### Setting it up somewhere else
+The runbook has to survive being executed by somebody else's assistant on a
+machine nobody here will ever see.
+- `scripts/preflight.sh` names what a machine is still missing and the exact fix
+  for each — node, the CLIs, the accounts — and refuses to say "ready" while
+  anything blocks. It diagnoses in dependency order: an unrunnable wrangler
+  reads as a missing wrangler, not as a missing Cloudflare account.
+- `docs/CLOUDFLARE.md` walks the Worker path from an empty machine and no
+  account to a verified deployment, including the two steps only the person can
+  do in their own browser and the words to hand them. It also states plainly
+  what each hosting shape means for who can see the prototype, and that shape B
+  asks the reviewer to sign in twice.
+- `assemble.py --comments <worker> --room <name>` points a new project at a
+  comments host at assembly time, so the tag is never edited by hand.
+- Tests read the runbook against the code: every script it names exists, every
+  secret it tells people to set is one the Worker reads, the tag it hands over
+  is the one the overlay understands. Verified by breaking each on purpose.

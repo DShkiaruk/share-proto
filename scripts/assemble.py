@@ -2,11 +2,20 @@
 """Assemble a shareable prototype project from the template.
 
 Usage: python3 assemble.py <prototype.html> <target-dir>
+                           [--comments <https://worker-host>] [--room <name>]
 
 - copies the template into <target-dir>
 - puts the prototype at public/index.html with the comment overlay injected
 - ensures viewport-fit=cover so safe-area insets work on iOS
 - fills the login page title from the prototype's <title>
+
+--comments points the overlay at a comments host that is not this deployment —
+a Cloudflare Worker, typically, because Vercel's free Blob quota is counted per
+account and runs out (see docs/CLOUDFLARE.md). The page is still served and
+gated here; only the comments live there. --room names the room on that host,
+so one Worker can hold several prototypes; it defaults to the target directory's
+name. Editing the tag by hand afterwards does the same thing and is easier to
+get subtly wrong.
 """
 import re
 import shutil
@@ -16,18 +25,43 @@ from pathlib import Path
 TEMPLATE = Path(__file__).resolve().parent.parent / "template"
 
 
+def opt(args: list[str], name: str) -> str | None:
+    flag = f"--{name}"
+    return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
+
+
 def main() -> None:
-    if len(sys.argv) != 3:
-        sys.exit("usage: assemble.py <prototype.html> <target-dir>")
-    src = Path(sys.argv[1]).expanduser()
-    target = Path(sys.argv[2]).expanduser()
+    args = sys.argv[1:]
+    comments = opt(args, "comments")
+    room = opt(args, "room")
+    positional = []
+    skip = False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a.startswith("--"):
+            skip = True
+            continue
+        positional.append(a)
+    if len(positional) != 2:
+        sys.exit("usage: assemble.py <prototype.html> <target-dir> [--comments <url>] [--room <name>]")
+    src = Path(positional[0]).expanduser()
+    target = Path(positional[1]).expanduser()
     html = src.read_text(encoding="utf-8")
     if target.exists() and any(target.iterdir()):
         sys.exit(f"ERROR: {target} already exists and is not empty")
 
     shutil.copytree(TEMPLATE, target, dirs_exist_ok=True)
 
-    overlay_tag = '<script src="/overlay.js" defer></script>'
+    if comments:
+        host = comments.rstrip("/")
+        # The room defaults to the project's own name: a Worker holds many, and
+        # two prototypes sharing one room is the mistake this prevents.
+        name = room or target.name
+        overlay_tag = f'<script src="{host}/overlay.js" data-room="{name}" defer></script>'
+    else:
+        overlay_tag = '<script src="/overlay.js" defer></script>'
     if "overlay.js" not in html:
         # AI-generated prototypes are often fragment-style (no <body> at all);
         # appending at the end is equivalent — browsers auto-place it in body.
@@ -63,7 +97,8 @@ def main() -> None:
         login.read_text(encoding="utf-8").replace("{{PROTO_TITLE}}", title),
         encoding="utf-8",
     )
-    print(f"OK: assembled at {target} (title: {title})")
+    where = f", comments on {comments.rstrip('/')} in room \"{room or target.name}\"" if comments else ""
+    print(f"OK: assembled at {target} (title: {title}{where})")
 
 
 if __name__ == "__main__":
