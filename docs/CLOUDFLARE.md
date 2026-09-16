@@ -122,9 +122,21 @@ Keep it; everything below needs it. Rename the worker in `wrangler.jsonc`
 bash scripts/worker-smoke.sh          # the whole contract against a local wrangler dev
 ```
 
-Then the deployed one, in a browser: open `https://<worker>/demo` — a fake screen
-with the overlay on it. Sign in with the client password and leave a comment. If
-that works, the Worker is done; anything that fails later is the wiring, not it.
+Then the same contract against the **deployed** one, in a room made for it:
+
+```bash
+bash scripts/smoke.sh https://<worker> <team password> <client password> --room smoke
+```
+
+`--room` is what makes this work on a Worker: it names the room and switches to
+the bearer token the login returns, because a Worker sets no cookie. Use a
+throwaway name rather than a live room — the checks delete their comments, but
+the map keeps the two screens they teach it. Do not continue until it prints
+`ALL OK`.
+
+A browser pass on top, if you want to see it: open `https://<worker>/demo` — a
+fake screen with the overlay on it. Sign in and leave a comment. If that works,
+the Worker is done; anything that fails later is the wiring, not it.
 
 ## 5. Point the prototype at it
 

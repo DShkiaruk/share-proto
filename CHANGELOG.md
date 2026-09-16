@@ -142,6 +142,16 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - `tests/unit/routing.test.mjs` pins both: the API, `/overlay.js`, `login.html`
   and a build's hashed assets must still be served as themselves.
 
+### Checking a host you have already deployed
+- `scripts/smoke.sh` takes `--room <name>` and speaks bearer tokens, so the same
+  contract that checks a Vercel install now checks a deployed Cloudflare Worker.
+  Until now the only scripted check for the Worker booted `wrangler dev` on
+  localhost with its own passwords — a deployed host could only be tried by
+  hand, and pointing the existing script at one read as "every password is
+  wrong", because a Worker sets no cookie.
+- The gate check is skipped, by name, when a room is given: a comments host
+  serves no prototype and gating it is the page host's job.
+
 ## v2.3 — 2026-09-14
 
 A room can move between deployments, and the tool stops spending the free tier

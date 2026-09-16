@@ -119,9 +119,13 @@ npx wrangler deploy
 
 Verify before handing the URL over: `scripts/worker-smoke.sh` runs the whole
 contract against a local `wrangler dev`, and `npm run e2e:worker` runs the
-embed spec — the real overlay on a foreign page — against it. On the
-deployed host, open `/demo`: a fake screen with the overlay attached, so the
-client can try commenting before any PR carries the tag.
+embed spec — the real overlay on a foreign page — against it. The **deployed**
+host takes the same contract with `scripts/smoke.sh https://<worker> <team>
+<client> --room smoke`: `--room` names the room and switches to the bearer
+token a Worker's login returns (it sets no cookie), so use a throwaway room
+name rather than a live one. On the deployed host, `/demo` is a fake screen
+with the overlay attached, so the client can try commenting before any PR
+carries the tag.
 
 ### Moving a room that already exists
 
