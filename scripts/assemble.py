@@ -93,8 +93,17 @@ def main() -> None:
     m = re.search(r"<title>([^<]{1,60})</title>", html)
     title = (m.group(1).strip() if m else src.stem) or src.stem
     login = target / "public" / "login.html"
+    # The gate signs the reviewer in to the comments host as well, so one
+    # password is typed once. Without this line the panel asks for it again.
+    meta = (
+        f'<meta name="fp-comments" content="{comments.rstrip("/")}" data-room="{room or target.name}" />'
+        if comments
+        else ""
+    )
     login.write_text(
-        login.read_text(encoding="utf-8").replace("{{PROTO_TITLE}}", title),
+        login.read_text(encoding="utf-8")
+        .replace("{{PROTO_TITLE}}", title)
+        .replace("{{COMMENTS_META}}", meta),
         encoding="utf-8",
     )
     where = f", comments on {comments.rstrip('/')} in room \"{room or target.name}\"" if comments else ""

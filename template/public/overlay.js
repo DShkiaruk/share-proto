@@ -2852,6 +2852,9 @@
     }
   }
   const mapView = { x: 40, y: 40, k: 1 };
+  // How far out the wheel may go. Set by fitting: a graph that needed 0.08 to
+  // fit must not snap back to 0.3 on the first scroll.
+  let minZoom = 0.3;
   let showHiddenNodes = false;
   const NODE_W = 240;
   // Must match .map-node's min-height in the CSS: the layout places cards by
@@ -2861,6 +2864,9 @@
   const ROW = 276;
   const BAND_TOP = 46; // room for the band label above the first row
   const LOOSE_GAP = 96; // the gap that says "this is a different kind of thing"
+  // How tall one band may get before it wraps into a second column. Eight cards
+  // is about what a laptop shows at a scale you can still read.
+  const MAX_BAND_ROWS = 8;
 
   /* The map is a flow, so it is laid out like one: columns are distance from
      the screen the prototype opens on, and screens no click leads to get their
@@ -2923,6 +2929,7 @@
     // child three rows below its parent drags a line across everything between.
     const rowOf = new Map();
     const columns = [];
+    let bandX = 0;
     for (const d of [...cols.keys()].sort((a, b) => a - b)) {
       const col = cols.get(d);
       const pull = (n) => {
@@ -2933,19 +2940,36 @@
       };
       const weight = new Map(col.map((n) => [n.label, pull(n)]));
       col.sort((a, b) => weight.get(a.label) - weight.get(b.label) || byLabel(a, b));
+      // A band wraps instead of growing without end. A console whose menu puts
+      // twenty destinations one click from home used to lay them out as a single
+      // column taller than any screen: the map fitted to a thin ribbon of
+      // unreadable thumbnails in the middle of an empty canvas. The band still
+      // means "this far from the start" — it is just allowed to be more than one
+      // column wide, so the space the map already has gets used.
+      // Up to the cap it stays one column, which is what a flow should look
+      // like. Past it the band is squared off rather than merely halved: cards
+      // are wider than they are tall, so the row count that makes the band
+      // roughly square is the one that survives fitting at a readable size.
+      const rows =
+        col.length <= MAX_BAND_ROWS
+          ? col.length
+          : Math.max(4, Math.ceil(Math.sqrt((col.length * COL) / ROW)));
+      const subs = Math.ceil(col.length / rows);
       col.forEach((n, i) => {
-        n.row = i;
-        rowOf.set(n.label, i);
-        n.x = d * COL;
+        const r = i % rows;
+        n.row = r;
+        rowOf.set(n.label, r);
+        n.x = bandX + Math.floor(i / rows) * COL;
       });
-      columns.push({ d, x: d * COL, count: col.length, nodes: col });
+      columns.push({ d, x: bandX, count: rows, nodes: col });
+      bandX += subs * COL;
     }
     // Centre every column on the band: a one-screen column pinned to the top
     // sends its lines diving past three rows to reach the middle of the next.
     const tallest = Math.max(1, ...columns.map((c) => c.count));
     for (const c of columns) {
       c.offset = ((tallest - c.count) * ROW) / 2;
-      c.nodes.forEach((n, i) => (n.y = BAND_TOP + c.offset + i * ROW));
+      c.nodes.forEach((n) => (n.y = BAND_TOP + c.offset + n.row * ROW));
       c.top = BAND_TOP + c.offset;
       delete c.nodes;
     }
@@ -3374,10 +3398,18 @@
     if (fit) {
       const vw = mapEl.clientWidth || innerWidth;
       const vh = (mapEl.clientHeight || innerHeight) - 56;
-      // 0.3 is the wheel's floor: fitting past it would strand the view.
-      mapView.k = Math.max(0.3, Math.min(1, (vw - 80) / Math.max(1, W), (vh - 80) / Math.max(1, H)));
-      mapView.x = Math.max(24, (vw - W * mapView.k) / 2);
-      mapView.y = Math.max(24, (vh - H * mapView.k) / 2);
+      // Fit has to actually fit. A console whose menu puts twenty destinations
+      // one click from home lays out as a column taller than any screen, and a
+      // fixed floor of 0.3 meant the map opened on a sliver of it and looked
+      // broken. The floor follows the graph instead, and the wheel is not
+      // allowed to zoom out past what fitting just showed — which is what the
+      // floor was protecting against.
+      mapView.k = Math.max(0.06, Math.min(1, (vw - 80) / Math.max(1, W), (vh - 80) / Math.max(1, H)));
+      minZoom = Math.min(0.3, mapView.k);
+      // Centred, not pinned to the corner: an overflowing graph reads as a
+      // middle you can drag out of, not as a top-left fragment.
+      mapView.x = (vw - W * mapView.k) / 2;
+      mapView.y = (vh - H * mapView.k) / 2;
     }
     apply();
     let drag = null;
@@ -3403,7 +3435,7 @@
       'wheel',
       (e) => {
         e.preventDefault();
-        const k = Math.min(2, Math.max(0.3, mapView.k * (e.deltaY < 0 ? 1.1 : 0.9)));
+        const k = Math.min(2, Math.max(minZoom, mapView.k * (e.deltaY < 0 ? 1.1 : 0.9)));
         const r = viewport.getBoundingClientRect();
         const px = e.clientX - r.left;
         const py = e.clientY - r.top;
@@ -3793,6 +3825,11 @@
     version: 2,
     label: screenLabel,
     refresh,
+    // The crawler posts the map's screenshots through this rather than
+    // hard-coding /api/comments: on an install whose comments live on another
+    // host, same-origin is the wrong address, and the failure is silent —
+    // every shot is refused and the map comes out as a graph of blank cards.
+    api,
     get pollEvery() { return pollEvery; },
     get state() { return state; },
   };

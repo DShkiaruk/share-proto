@@ -387,3 +387,45 @@ test('a card whose transition needs an in-screen step still takes you there', as
   await expect(page.locator('section[data-route="report"] h1')).toBeVisible({ timeout: 20_000 });
   await expect.poll(() => page.evaluate(() => window.__fp.label()), { timeout: 10_000 }).toBe('Report');
 });
+
+test('Fit shows the whole map, however tall the prototype makes it', async ({ page }) => {
+  // A console whose menu puts twenty destinations one click from home lays out
+  // as one very long column. Fit used to stop at a fixed 0.3 and pin the view
+  // to the corner, so the map opened on a sliver and read as broken.
+  await login(page, 'Designer', TEAM);
+  for (let i = 0; i < 24; i++) {
+    expect(await apiPost(page, { action: 'edge', from: 'Home', to: `Deep screen ${i}`, anchor: { path: `a#n${i}`, t: 'a', txt: `n${i}` } })).toBe(200);
+  }
+  await page.reload();
+  await page.mouse.click(600, 720);
+  await page.keyboard.press('KeyM');
+  await expect(inOverlay(page, '.map')).toBeVisible();
+  await page.waitForTimeout(400); // the fit transform settles
+
+  const box = async () =>
+    page.evaluate(() => {
+      const r = document.querySelector('[data-fp-host]').shadowRoot;
+      const view = r.querySelector('.map').getBoundingClientRect();
+      const nodes = [...r.querySelectorAll('.map-node')].map((n) => n.getBoundingClientRect());
+      return {
+        count: nodes.length,
+        cardWidth: nodes.length ? nodes[0].width : 0,
+        top: Math.min(...nodes.map((n) => n.top)),
+        bottom: Math.max(...nodes.map((n) => n.bottom)),
+        left: Math.min(...nodes.map((n) => n.left)),
+        right: Math.max(...nodes.map((n) => n.right)),
+        view: { top: view.top, bottom: view.bottom, left: view.left, right: view.right },
+      };
+    });
+
+  const b = await box();
+  expect(b.count).toBeGreaterThanOrEqual(24);
+  // Fitting is not enough on its own: a single 24-tall column fits too, as a
+  // ribbon of thumbnails nobody can read. The cards have to stay recognisable.
+  expect(b.cardWidth).toBeGreaterThan(70);
+  // Every card inside the panel, with a pixel of slack for rounding.
+  expect(b.top).toBeGreaterThanOrEqual(b.view.top - 1);
+  expect(b.bottom).toBeLessThanOrEqual(b.view.bottom + 1);
+  expect(b.left).toBeGreaterThanOrEqual(b.view.left - 1);
+  expect(b.right).toBeLessThanOrEqual(b.view.right + 1);
+});

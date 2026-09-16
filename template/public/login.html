@@ -6,6 +6,7 @@
   <meta name="robots" content="noindex" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>{{PROTO_TITLE}} — protected prototype</title>
+  {{COMMENTS_META}}
   <style>
     :root {
       --ink: #0a0a0a;
@@ -171,6 +172,41 @@
       badInput.focus();
     }
 
+    /* When the comments live on another host, that host has its own login and no
+       way to see this one's cookie — so without this the reviewer types the same
+       password twice, once here and once in the comment panel. The password is
+       in hand at this exact moment; spend it on both. The overlay reads the token
+       from the key below, and falls back to its own modal whenever this does not
+       land, so a host with different passwords still works. */
+    async function signInToComments(name, password) {
+      const meta = document.querySelector('meta[name="fp-comments"]');
+      const host = meta && meta.getAttribute('content');
+      if (!host) return;
+      const room = meta.getAttribute('data-room') || '';
+      const q = room ? `?room=${encodeURIComponent(room)}` : '';
+      const stop = new AbortController();
+      // The gate must never wait on the comments host: if it is slow or down,
+      // the prototype still opens and the panel asks for the password itself.
+      const timer = setTimeout(() => stop.abort(), 5000);
+      try {
+        const r = await fetch(`${host}/api/login${q}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, password }),
+          signal: stop.signal,
+        });
+        const d = r.ok ? await r.json() : null;
+        if (d && d.token) {
+          localStorage.setItem(`fp_token::${host}::${room}`, d.token);
+          localStorage.setItem('fp_name', name);
+        }
+      } catch {
+        /* handed back to the overlay's own login */
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       form.classList.remove('error');
@@ -187,6 +223,7 @@
           body: JSON.stringify({ name, password }),
         });
         if (r.ok) {
+          await signInToComments(name, password);
           // Keep query params — deep links like /?comment=<id> must survive login.
           location.reload();
           return;

@@ -152,6 +152,42 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - The gate check is skipped, by name, when a room is given: a comments host
   serves no prototype and gating it is the page host's job.
 
+### One password, typed once
+Splitting the page from the comments left the reviewer signing in twice — the
+cost the runbook told you to warn people about. The gate has the password in
+hand at the moment it works; it now spends it on the comments host too and
+writes the token the overlay reads.
+- `assemble.py --comments` stamps the host and room into `login.html`;
+  `update.py` gives an older install the same thing, read off the overlay tag on
+  its own page rather than carried beside it.
+- Nothing blocks on it: a 5-second budget, and any failure hands the reviewer
+  back to the overlay's own login, which is what a host with different passwords
+  needs anyway.
+- `crawl.mjs` passes that login too, so the map can be built for a deployment
+  whose comments are hosted apart. It could not before — it walked past the
+  modal and reported success having learned nothing, which is why a Worker-backed
+  room's map stayed at one screen.
+
+### The map, on a real console
+Three things had to be true at once for **M** to be worth opening, and on a
+client's first room none of them were.
+- **The shots went to the wrong host.** `crawl.mjs` posted them to the page's own
+  origin; with the comments on a Worker every one was refused, and the crawl
+  still printed a summary that looked like success. It posts through the overlay
+  now (`window.__fp.api`), which is the only thing that knows where the comments
+  live.
+- **Fit did not fit.** The scale was clamped at 0.3, so a graph taller than that
+  allowed opened on a sliver of itself, pinned to the top-left corner. The floor
+  now follows the graph, the view is centred, and the wheel cannot zoom out past
+  what fitting just showed.
+- **A band grew without end.** A console whose menu puts twenty destinations one
+  click from home laid them out as a single column taller than any screen. A band
+  past eight cards is squared off into several columns instead — it still means
+  "this far from the start", it is just allowed to be wider than one card.
+- `tests/e2e/map.spec.mjs` seeds twenty-four screens one click apart and measures
+  the result: every card inside the panel, and wide enough on screen to be
+  recognised. It fails on the old code.
+
 ## v2.3 — 2026-09-14
 
 A room can move between deployments, and the tool stops spending the free tier

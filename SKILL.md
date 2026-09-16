@@ -287,14 +287,15 @@ bash <skill-dir>/scripts/smoke.sh https://<real-domain> "$PASS_TEAM" "$PASS_CLIE
 
 It checks the login gate, both roles, 401s, that a designer thread is invisible to the client, and the private file proxy. It creates one thread and deletes it. Do not continue to the hand-over until it prints `ALL OK`.
 
-### 6b. Build the map (optional, ~1–3 min)
+### 6b. Build the map (~1–3 min) — not optional on a fresh room
 
 ```bash
 cd <skill-dir> && npm install --silent   # once: Playwright for the crawler
 node <skill-dir>/scripts/crawl.mjs https://<real-domain> --password "$PASS_TEAM"
 ```
 
-It walks the prototype breadth-first with real clicks — the overlay learns the screen graph from them — and takes a shot of every screen; reviewers then press **M** for the map. It never presses controls whose text matches delete/remove/reset/sign out/log out/clear/discard, and every branch starts from a fresh load. Skip it for prototypes with other destructive buttons, or run with `--max-screens 10` first.
+A room nobody has walked knows one screen, so **M** opens on a single card and
+reads as broken. This is what fills it. It walks the prototype breadth-first with real clicks — the overlay learns the screen graph from them — and takes a shot of every screen; reviewers then press **M** for the map. It never presses controls whose text matches delete/remove/reset/sign out/log out/clear/discard, and every branch starts from a fresh load. Skip it for prototypes with other destructive buttons, or run with `--max-screens 10` first.
 
 ### 7. Hand over — REQUIRED output format
 

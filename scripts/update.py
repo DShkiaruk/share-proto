@@ -33,6 +33,26 @@ KEEP = {"public/index.html"}
 TITLED = "public/login.html"
 
 
+# Where the comments live is written once, in the overlay tag on the prototype
+# itself — so it is read from there rather than carried along beside it. An
+# install made before the gate learned to sign in to that host has no meta to
+# preserve, and gains one here.
+def comments_meta(target: Path) -> str:
+    index = target / "public" / "index.html"
+    if not index.is_file():
+        return ""
+    m = re.search(
+        r'<script[^>]*src="(https?://[^"]+)/overlay\.js"[^>]*>',
+        index.read_text(encoding="utf-8"),
+    )
+    if not m:
+        return ""
+    tag = m.group(0)
+    host = m.group(1)
+    room = re.search(r'data-room="([^"]*)"', tag)
+    return f'<meta name="fp-comments" content="{host}" data-room="{room.group(1) if room else ""}" />'
+
+
 def rel_files(base: Path):
     return sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
 
@@ -75,7 +95,11 @@ def main() -> None:
             if title is None:
                 kept.append(rel + "  (no title found — left as it is)")
                 continue
-            new = src.read_text(encoding="utf-8").replace("{{PROTO_TITLE}}", title)
+            new = (
+                src.read_text(encoding="utf-8")
+                .replace("{{PROTO_TITLE}}", title)
+                .replace("{{COMMENTS_META}}", comments_meta(target))
+            )
             if dst.read_text(encoding="utf-8") == new:
                 continue
             if not dry:

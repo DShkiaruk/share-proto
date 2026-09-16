@@ -62,6 +62,27 @@ try {
   await browser.close();
   process.exit(1);
 }
+// When the comments live on another host, the overlay has a login of its own.
+// A gate that signs in to that host too leaves nothing to do here; an older
+// install, or the overlay dropped on a page with no gate at all, still asks —
+// and a crawler that walks past the modal learns nothing and reports success.
+const modal = page.locator('[data-fp-host] >> .login-card');
+if (await modal.isVisible().catch(() => false)) {
+  const fields = page.locator('[data-fp-host] >> .login-input');
+  await fields.first().fill(opt('name', 'Crawler'));
+  await fields.nth(1).fill(opt('password'));
+  const btn = page.locator('[data-fp-host] >> .login-btn:not(.secondary)');
+  const box = await btn.boundingBox();
+  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+try {
+  await page.waitForFunction(() => Boolean(window.__fp?.state?.role), null, { timeout: 20000 });
+} catch {
+  console.error('the overlay never signed in — check the password, and that the comments host is reachable');
+  await browser.close();
+  process.exit(1);
+}
+
 const overlayVersion = await page.evaluate(() => window.__fp?.version || 0);
 if (!overlayVersion) {
   console.error('this deployment runs an overlay without the screen-label hook (pre-v2) — the map cannot be built from it');
@@ -118,15 +139,18 @@ const shoot = async (lbl) => {
   } finally {
     await showOverlay(true).catch(() => {});
   }
+  // Through the overlay, which knows where the comments actually live — this
+  // used to post to the page's own origin, which is the wrong host whenever
+  // they are hosted apart, and every shot was dropped without a word.
   return page.evaluate(
-    async ([l, b64]) =>
-      (
-        await fetch('/api/comments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'shot', label: l, image: 'data:image/jpeg;base64,' + b64 }),
-        })
-      ).ok,
+    async ([l, b64]) => {
+      try {
+        await window.__fp.api('POST', { action: 'shot', label: l, image: 'data:image/jpeg;base64,' + b64 });
+        return true;
+      } catch {
+        return false; // a refused shot is one blank card, not a failed crawl
+      }
+    },
     [lbl, buf.toString('base64')]
   );
 };

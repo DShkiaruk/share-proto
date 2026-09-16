@@ -29,10 +29,12 @@ Be straight about this before starting, because it changes who can see what.
 | **B. Page on Vercel + comments on a Worker** | behind the password | on the Worker — no practical ceiling |
 | **C. Page on any static host + comments on a Worker** | open to anyone with the link | on the Worker |
 
-**B** is the recommended one and what the rest of this describes. Its one cost:
-the reviewer signs in twice with the same password — once for the page (Vercel's
-gate) and once in the comment overlay (the Worker does not know about Vercel's
-cookie). Say that out loud; it surprises people otherwise.
+**B** is the recommended one and what the rest of this describes. The reviewer
+signs in **once**: the Worker cannot see Vercel's cookie, so the gate spends the
+password on both and hands the overlay its token. That only works when the two
+passwords match — set them the same, as step 2 does. If the comment panel ever
+asks for a password of its own, they have drifted apart; the panel is the
+fallback, not the plan.
 
 Pick **C** only when the prototype itself is not confidential.
 
@@ -194,9 +196,10 @@ fastest route, support is the free one — and the move run the moment it answer
 
 ## 8. Hand over
 
-Give the person: the prototype URL, the two passwords, which is which, and the
-sentence about signing in twice (shape B). Add that the Worker is on **their**
-Cloudflare account and costs nothing at this size.
+Give the person: the prototype URL, the two passwords and which is which. Add
+that the Worker is on **their** Cloudflare account and costs nothing at this
+size. Build the map before handing it over (step 6b in SKILL.md) — on a fresh
+room the map holds one screen, which reads as broken.
 
 ## More than one client on the same Worker
 
