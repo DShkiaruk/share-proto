@@ -7,7 +7,8 @@ rm -rf tests/fixtures/site
 python3 scripts/assemble.py tests/fixtures/proto.html tests/fixtures/site >/dev/null
 cd tests/fixtures/site
 rm -rf data
-# ALLOWED_ORIGINS lets the embed-mode fixture on :4174 talk to this host.
+# ALLOWED_ORIGINS lets the embed fixtures talk to this host: :4174 is a page
+# with no gate of its own, :4175 is a gated page whose comments live here.
 DESIGNER_PASSWORD=team-e2e CLIENT_PASSWORD=client-e2e SESSION_SECRET=e2e-secret \
-  ALLOWED_ORIGINS=http://localhost:4174 \
+  ALLOWED_ORIGINS=http://localhost:4174,http://localhost:4175 \
   exec node server.js --port 4173

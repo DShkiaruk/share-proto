@@ -32,7 +32,8 @@ When a user shares this repository link and asks to build/share/publish a protot
    `git clone https://github.com/DShkiaruk/share-proto ~/.claude/skills/share-proto`
    (if the folder exists, update it: `git -C ~/.claude/skills/share-proto pull`)
 2. Read `SKILL.md` at the repo root and follow it step by step. It covers three input cases (a local HTML file, a URL of an already-deployed prototype, a project already linked to Vercel) and three modes (Vercel, local, embed).
-3. **Mandatory output**: your final message must end with the prominent block from SKILL.md step 7 — the share link and both passwords. Never bury them in prose.
+3. **Before handing the link over**, run `scripts/verify.mjs` against the real URL (SKILL.md step 6c). It walks the deployment as a designer and as a client and measures what a person actually gets. Every failure it reports was found by a designer first — [docs/WHAT-BREAKS.md](docs/WHAT-BREAKS.md) is the list and the reasoning.
+4. **Mandatory output**: your final message must end with the prominent block from SKILL.md step 7 — the share link and both passwords. Never bury them in prose.
 
 ## What's inside
 
@@ -41,14 +42,19 @@ SKILL.md              — the step-by-step runbook (also works as a Claude Code 
 scripts/assemble.py   — deterministic project assembly from the template
 scripts/smoke.sh      — post-deploy checks (gate, roles, isolation, file proxy)
 scripts/crawl.mjs     — walks the prototype with real clicks and shoots every screen for the map
+scripts/verify.mjs    — the reviewer's journey on a live deployment, measured: one sign-in,
+                        one way to comment, a comment that survives a reload, role isolation,
+                        a map with pictures in it
+docs/WHAT-BREAKS.md   — what has broken in front of a designer, and the check that catches it now
 template/             — the complete system: auth middleware, comments API, overlay UI
 template/server.js    — local mode server (no Vercel)
 worker/               — Cloudflare Worker edition of the comments server (embed mode host);
                         one Durable Object per room, the rules in worker/src/room.js
-tests/                — unit tests (node --test) and Playwright e2e: five local projects
-                        (place · media · workflow · map · embed) against the fixture,
-                        plus a smoke project against a real deployment. The embed spec
-                        runs a second time against the Worker (npm run e2e:worker)
+tests/                — unit tests (node --test) and Playwright e2e against three fixture
+                        hosts: the gated page (:4173), a page with no gate of its own
+                        (:4174) and a gated page whose comments live on another host
+                        (:4175 — the shape the Cloudflare runbook recommends). The embed
+                        spec runs a second time against the Worker (npm run e2e:worker)
 ```
 
 The template is self-contained: append-only comment events in a private Blob store with a single derived state document, element-anchored pins, a shared navigation graph that powers "Go to comment", automatic dark-theme matching. Don't rewrite its internals — they encode lessons that aren't reproducible from the code alone (see "Hard rules" in SKILL.md).

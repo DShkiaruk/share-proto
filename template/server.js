@@ -34,6 +34,8 @@ const { clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sani
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 const { sanitizeImport, importFile, mergeImport } = await import('./lib/importing.js');
+// Empty unless this install's comments live somewhere else (assemble.py --comments).
+const { COMMENTS_HOST, COMMENTS_ROOM } = await import('./lib/comments-host.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -568,6 +570,35 @@ function sendFile(req, res, file, st, status = 200) {
 
 const OPEN_PATHS = new Set(['/login.html', '/favicon.svg']);
 
+/* A comments session for a reader this gate has already let in — the same
+   route as the Vercel edition's api/comments-token.js, and for the same reason:
+   when the comments live on another host it cannot see this one's cookie, so
+   without this the reader is asked for the same password twice. Both editions
+   that serve a gated page carry it; the Worker serves no page and does not.
+   The role comes from the signed session, never from the request. */
+async function apiCommentsToken(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
+  if (!COMMENTS_HOST) return json(res, 404, { error: 'No remote comments host' });
+  const session = await sessionFromHeaders(req.headers.cookie || '', '', SECRETS.sessionSecret);
+  if (!session) return json(res, 401, { error: 'Not authenticated' });
+  const password = session.r === 'designer' ? SECRETS.designerPassword : SECRETS.clientPassword;
+  if (!password) return json(res, 404, { error: 'No password for this role' });
+  const q = COMMENTS_ROOM ? `?room=${encodeURIComponent(COMMENTS_ROOM)}` : '';
+  try {
+    const r = await fetch(`${COMMENTS_HOST}/api/login${q}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: session.n, password }),
+    });
+    const d = r.ok ? await r.json() : null;
+    if (!d?.token) return json(res, 502, { error: 'The comments host did not accept this deployment' });
+    return json(res, 200, { token: d.token, role: d.role, name: session.n });
+  } catch {
+    return json(res, 502, { error: 'The comments host could not be reached' });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, 'http://local').pathname;
@@ -577,6 +608,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/login') return await apiLogin(req, res);
     if (pathname === '/api/logout') return apiLogout(req, res);
+    if (pathname === '/api/comments-token') return await apiCommentsToken(req, res);
 
     const session = await sessionFromHeaders(
       req.headers.cookie || '',

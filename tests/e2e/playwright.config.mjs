@@ -15,6 +15,14 @@ const projects = [
   // Last: it leaves two comments behind, so no earlier count is disturbed.
   { name: 'local-theme', testMatch: /theme\.spec\.mjs/, use: local, dependencies: ['local-embed'] },
   { name: 'local-budget', testMatch: /budget\.spec\.mjs/, use: local, dependencies: ['local-theme'] },
+  // The recommended shape: a gated page on :4175 whose comments live on :4173.
+  // Its own room, so nothing it writes disturbs the counts above.
+  {
+    name: 'local-bridge',
+    testMatch: /bridge\.spec\.mjs/,
+    use: { baseURL: 'http://localhost:4175', viewport: { width: 1280, height: 800 } },
+    dependencies: ['local-budget'],
+  },
 ];
 if (process.env.LAB_URL) {
   projects.push({
@@ -46,6 +54,14 @@ export default defineConfig({
       // no share-proto server of its own.
       command: 'bash tests/fixtures/serve-embed.sh',
       url: 'http://localhost:4174/embed-host.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+      cwd: new URL('../..', import.meta.url).pathname,
+    },
+    {
+      // A gated page whose comments are hosted apart — shape B in the runbook.
+      command: 'bash tests/fixtures/serve-bridge.sh',
+      url: 'http://localhost:4175/login.html',
       reuseExistingServer: false,
       timeout: 30_000,
       cwd: new URL('../..', import.meta.url).pathname,

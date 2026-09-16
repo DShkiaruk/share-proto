@@ -231,4 +231,20 @@ while (queue.length && seen.size < MAX && budget()) {
   }
 }
 console.log(JSON.stringify({ screens: seen.size, edges, shots, seconds: Math.round((Date.now() - t0) / 1000) }));
+
+// A crawl that learned the graph and posted nothing is not a success, and it
+// used to print one: every screenshot was refused and the summary looked fine,
+// so the map came out as a graph of blank cards and nobody knew until a
+// reviewer opened it.
+if (seen.size > 1 && shots === 0) {
+  console.error(
+    '\nNo screenshot was accepted. The graph is there and every card will be blank.\n' +
+      'Usually the comments host refused them: check that the overlay is signed in to it,\n' +
+      'and that this deployment points at the host the comments actually live on.'
+  );
+  process.exit(1);
+}
+if (shots < seen.size) {
+  console.error(`\n${seen.size - shots} of ${seen.size} screens have no picture; their cards will be blank.`);
+}
 await browser.close();

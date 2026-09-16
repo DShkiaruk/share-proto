@@ -5,7 +5,8 @@
 // deployment. These checks read the sources and compare.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 const root = new URL('../../', import.meta.url).pathname;
 const read = (p) => readFileSync(root + p, 'utf8');
@@ -64,4 +65,24 @@ test('every server takes its thread rules from template/lib', () => {
       assert.ok(src.includes(fn), `${name} does not use ${fn} from the shared rules`);
     }
   }
+});
+
+test('both editions that serve a gated page answer the same API routes', () => {
+  // The actions were kept in step; the routes were not. /api/comments-token
+  // shipped on Vercel only, so the same install served from server.js asked the
+  // reviewer for the password twice and nothing said why. A route that exists on
+  // one page-serving edition and not the other is the same class of bug as an
+  // action that does — this catches it the same way.
+  const vercel = new Set(
+    readdirSync(join(root, 'template/api'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `/api/${f.replace(/\.js$/, '')}`)
+  );
+  const server = readFileSync(join(root, 'template/server.js'), 'utf8');
+  const local = new Set([...server.matchAll(/pathname === '(\/api\/[a-z-]+)'/g)].map((m) => m[1]));
+  assert.deepEqual(
+    [...vercel].sort(),
+    [...local].sort(),
+    'the Vercel edition and the local edition serve different API routes'
+  );
 });

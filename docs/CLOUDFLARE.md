@@ -168,14 +168,23 @@ Then redeploy the page however it is normally deployed (`vercel deploy --prod
 
 ## 6. Verify the whole thing, not just the parts
 
-Open the prototype's real URL and, as a designer:
+Two commands, in this order. The first fills the map — a room nobody has walked
+knows one screen, and **M** opening on a single card reads as broken:
 
-1. leave a comment and reload — it is still there;
-2. open the comment list — it lists it;
-3. open the browser console — no CORS errors (if there are, revisit
-   `ALLOWED_ORIGINS` in step 2);
-4. sign in as the client in a private window — they see their own comments and
-   none of the team's.
+```bash
+node scripts/crawl.mjs  https://<page-url> --password <team password>
+node scripts/verify.mjs https://<page-url> --team <team password> \
+  --client <client password> --room <name> [--deep /an/inner/path]
+```
+
+`verify.mjs` walks it as a designer and as a client and measures what a person
+notices: one sign-in (the gate mints the comments session, so nobody is asked
+twice), one way to comment, a comment that survives a reload, a client who
+cannot read the team's, a map with pictures that fits on screen, no CORS in the
+console. It creates one comment and deletes it again. `ALL OK` is the bar.
+
+If it reports the comment panel asking for a password of its own, the two sides
+hold different passwords — step 2 sets them the same on purpose.
 
 ## 7. If there are comments somewhere else already
 

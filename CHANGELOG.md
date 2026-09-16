@@ -127,6 +127,41 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.5 — 2026-09-16
+
+Everything a designer found this week, turned into something that fails before
+they do. [docs/WHAT-BREAKS.md](docs/WHAT-BREAKS.md) is the case study: what was
+seen, what class it belonged to, and what catches it now.
+
+### One command for "is this ready to hand over"
+- **`scripts/verify.mjs`** walks a live deployment as a designer and as a client
+  and measures what a person gets: one sign-in, one way to comment, Backspace in
+  the composer and no shortcut leaking to the prototype, a comment that survives
+  a reload and remembers its screen, a client who cannot read the team's, a map
+  with pictures that fits on screen, a clean console. It leaves nothing behind
+  and names the fix for each failure. Required by SKILL.md step 6c and by the
+  Cloudflare runbook, not suggested.
+
+### The recommended shape is now a tested shape
+- A third fixture host: a **gated page on :4175 whose comments live on :4173**.
+  Four of the bugs this week existed only when those two are apart, and the
+  suite had only ever run same-origin. `tests/e2e/bridge.spec.mjs` covers the
+  single sign-in, a session issued before the gate learned it, a comment landing
+  in the right room on the other host, the client's isolation, and the fallback
+  when the bridge is gone — including that the toolbar goes with it.
+- `template/server.js` gained `/api/comments-token`, so both editions that serve
+  a gated page behave the same. `tests/unit/parity.test.mjs` now compares the
+  **routes** of those two editions, not only their actions — the drift that let
+  this ship on one of them.
+
+### Scripts that cannot report a failure as a success
+- `crawl.mjs` exits non-zero when it learned screens and stored no pictures, and
+  says so when some are missing. It printed `shots: 0` beside `screens: 30` and
+  exited 0, which is how a map of blank cards reached a reviewer.
+- `tests/unit/docs.test.mjs` checks every document against the tree: a runbook
+  may not name a script, spec or template file that does not exist, and SKILL.md
+  and the Cloudflare runbook must still tell people to verify and to build the map.
+
 ## v2.4 — 2026-09-16
 
 ### A prototype that routes on the client

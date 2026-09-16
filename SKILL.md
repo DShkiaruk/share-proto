@@ -297,6 +297,24 @@ node <skill-dir>/scripts/crawl.mjs https://<real-domain> --password "$PASS_TEAM"
 A room nobody has walked knows one screen, so **M** opens on a single card and
 reads as broken. This is what fills it. It walks the prototype breadth-first with real clicks — the overlay learns the screen graph from them — and takes a shot of every screen; reviewers then press **M** for the map. It never presses controls whose text matches delete/remove/reset/sign out/log out/clear/discard, and every branch starts from a fresh load. Skip it for prototypes with other destructive buttons, or run with `--max-screens 10` first.
 
+### 6c. Verify the reviewer's journey — do not skip this
+
+```bash
+node <skill-dir>/scripts/verify.mjs https://<real-domain> \
+  --team "$PASS_TEAM" --client "$PASS_CLIENT" \
+  [--room <name>] [--deep /an/inner/path]
+```
+
+`smoke.sh` checks the contract over HTTP; this checks what a person gets. It
+signs in as both roles, leaves one comment and deletes it again, and measures:
+one sign-in and one way to comment (not a toolbar and a login pill at once), a
+comment that survives a reload and remembers its screen, a client who cannot
+read the team's, a map with pictures in it that fits on screen, a clean console.
+Add `--room` when the comments are hosted apart and `--deep` when the prototype
+routes on the client. Every failure it can report was found by a designer first —
+see [docs/WHAT-BREAKS.md](docs/WHAT-BREAKS.md). Do not hand the link over until
+it prints `ALL OK`.
+
 ### 7. Hand over — REQUIRED output format
 
 End your final message with this standout block (translated to the user's language). The link and both passwords are MANDATORY and must be visually prominent — never bury them in prose:
@@ -314,7 +332,7 @@ Then briefly, in prose:
 - How reviewers use it: press **C** (or tap Comment) → click anywhere → type → Enter. Every comment gets a number (#1, #2…) shared by everyone; click a comment in the Threads sidebar and the prototype takes you there — other page, other screen, even inside a closed menu. Sort by newest/oldest/unread/screen; **J**/**K** walk the comments; **H** hides everything for a clean presentation (the small dot in the corner brings it back). Each comment keeps a picture of the screen it was left on (hover a thread in the sidebar to see it); reviewers can paste, drop or attach screenshots to any message. Threads have a status — Open, In progress, Done, Won’t do (with a short reason the client sees) — a kind (bug / question / idea), and reactions; the Threads button shows what changed since your last visit, and the Versions panel lists every build the prototype has had. **M** opens a map of every screen, laid out as a flow (columns = clicks from the opening screen; screens nothing links to sit in their own band). Click a screen to go there, comment on a screen from its card, and — as a designer — give a screen a picture; screens you visit are photographed for the map on their own. A comment remembers the state of the prototype it was left in: leave one on a screen's dark version and, from the light one, its header says so and offers to switch back.
 - Roles: designers see all comments; the client sees only client comments (server-enforced).
 - **To update the tool itself in a project that already has it** (a newer overlay, a fixed bug): `python3 <skill>/scripts/update.py <project-dir>` — add `--dry-run` first to see what it would touch. It syncs every file the tool owns, keeps `public/index.html`, the secrets and the Vercel link, and rewrites `public/login.html` with the prototype's own name instead of the template placeholder. Then redeploy and run `scripts/smoke.sh` against the deployment. Comments, screens and the learned map survive — they live in the store, not in these files. A Worker room is a separate deployment: `cd worker && npx wrangler deploy`.
-  Then check the deployment itself with Playwright, by measuring rather than by looking, and say what each check returned: dates in the comment list share one right edge (compare `right` across `.sb-row .time`); opening a comment leaves the list open and the popover clear of it; the status control is a button whose resting background matches the list's pickers; Backspace deletes in the composer and the letters `c`/`m` do not reach the prototype (it may guard keys of its own); the console stays clean and the thread count is the same before and after. Delete anything the check created. If the prototype switches theme by a class or a data attribute, leave a comment in one theme, switch to the other, and confirm the thread offers the way back and takes it — if it has no switch, say so rather than inventing the check.
+  Then run `scripts/verify.mjs` against it (step 6c) and say what it returned. If you are checking something it does not cover, measure rather than look: dates in the comment list share one right edge (compare `right` across `.sb-row .time`); opening a comment leaves the list open and the popover clear of it; the status control is a button whose resting background matches the list's pickers; Backspace deletes in the composer and the letters `c`/`m` do not reach the prototype (it may guard keys of its own); the console stays clean and the thread count is the same before and after. Delete anything the check created. If the prototype switches theme by a class or a data attribute, leave a comment in one theme, switch to the other, and confirm the thread offers the way back and takes it — if it has no switch, say so rather than inventing the check.
 - To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
 - If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.
 - To wipe all comments: `vercel blob empty-store --yes` from the project dir.

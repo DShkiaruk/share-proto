@@ -160,3 +160,34 @@ test('every shell script parses', () => {
     );
   }
 });
+
+test('every document only names scripts and files that exist', () => {
+  // Doc drift is the quiet kind: a renamed script leaves a runbook telling the
+  // next person to run something that is not there, and nothing fails until
+  // they try it — usually mid-setup, on someone else's machine.
+  const docs = ['SKILL.md', 'README.md', 'docs/CLOUDFLARE.md', 'docs/WHAT-BREAKS.md', 'docs/UPGRADE.md'].filter((d) =>
+    existsSync(join(root, d))
+  );
+  for (const doc of docs) {
+    const text = read(doc);
+    const named = new Set([
+      ...[...text.matchAll(/\b(scripts\/[a-z-]+\.(?:sh|mjs|py))\b/g)].map((m) => m[1]),
+      ...[...text.matchAll(/\b(tests\/(?:unit|e2e)\/[a-z-]+\.(?:test|spec)\.mjs)\b/g)].map((m) => m[1]),
+      ...[...text.matchAll(/\b(template\/[a-z/]+\.(?:js|json|html|css))\b/g)].map((m) => m[1]),
+    ]);
+    for (const f of named) {
+      assert.ok(existsSync(join(root, f)), `${doc} names ${f}, which does not exist`);
+    }
+  }
+});
+
+test('the runbook makes the reviewer walk a required step, not an optional one', () => {
+  // It was optional prose once, and the link went out with an empty map and a
+  // second password prompt. WHAT-BREAKS.md is the list of what that cost.
+  const skill = read('SKILL.md');
+  assert.ok(skill.includes('scripts/verify.mjs'), 'SKILL.md stopped telling anyone to verify the deployment');
+  assert.ok(skill.includes('docs/WHAT-BREAKS.md'), 'SKILL.md no longer points at the case study');
+  const cf = read('docs/CLOUDFLARE.md');
+  assert.ok(cf.includes('scripts/verify.mjs'), 'the Cloudflare runbook stopped verifying the result');
+  assert.ok(cf.includes('scripts/crawl.mjs'), 'the Cloudflare runbook stopped filling the map');
+});
