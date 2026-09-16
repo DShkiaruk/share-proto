@@ -46,6 +46,9 @@ test('an unsigned-in visitor is not blocked by the overlay and can dismiss it', 
   await mouseClick(page, inOverlay(page, '.login-close'));
   await expect(inOverlay(page, '.login-card')).toHaveCount(0);
   await expect(inOverlay(page, '.login-pill')).toBeVisible(); // quiet way back in
+  // …and only that. A toolbar beside it is a second way to comment that cannot
+  // post anything, which reads as two comment tools on one page.
+  await expect(inOverlay(page, '.toolbar')).toBeHidden();
   await page.reload();
   await expect(inOverlay(page, '.login-pill')).toBeVisible({ timeout: 15_000 }); // dismissal sticks for the session
   await expect(inOverlay(page, '.login-card')).toHaveCount(0);

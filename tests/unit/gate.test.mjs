@@ -87,3 +87,47 @@ test('the crawler posts where the comments actually live', () => {
   assert.ok(crawl.includes("window.__fp.api('POST'"), 'the crawler no longer goes through the overlay');
   assert.match(overlay, /window\.__fp = \{[\s\S]*?\n    api,\n/, 'the overlay stopped exposing api');
 });
+
+test('the server side learns the comments host too, and keeps it through an update', () => {
+  // The gate covers people signing in from now on. /api/comments-token covers
+  // everyone whose session was issued before it existed, and every token that
+  // expires mid-review — so the host has to be readable by the API, not only
+  // by the login page.
+  const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+  try {
+    const site = assemble(dir, '--comments', 'https://c.example.com/', '--room', 'acme');
+    const file = join(site, 'lib/comments-host.js');
+    assert.match(readFileSync(file, 'utf8'), /COMMENTS_HOST = "https:\/\/c\.example\.com"/);
+    assert.match(readFileSync(file, 'utf8'), /COMMENTS_ROOM = "acme"/);
+
+    // The template ships it empty; copying that over a live install would cut
+    // the bridge without a word.
+    writeFileSync(file, readFileSync(join(root, 'template/lib/comments-host.js'), 'utf8'));
+    execFileSync('python3', [join(root, 'scripts/update.py'), site]);
+    assert.match(readFileSync(file, 'utf8'), /COMMENTS_HOST = "https:\/\/c\.example\.com"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a deployment that hosts its own comments has nothing to bridge to', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+  try {
+    const site = assemble(dir);
+    assert.match(readFileSync(join(site, 'lib/comments-host.js'), 'utf8'), /COMMENTS_HOST = (""|'')/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the overlay asks the page before it asks the person', () => {
+  const overlay = readFileSync(join(root, 'template/public/overlay.js'), 'utf8');
+  assert.ok(overlay.includes("fetch('/api/comments-token'"), 'the overlay stopped asking the gate');
+  // Once per page load, and shared: the first load fires several requests, and
+  // two of them racing is what put a pill next to a working toolbar.
+  assert.ok(overlay.includes('pageSessionTry'), 'the attempt is no longer shared between callers');
+  assert.ok(/if \(!pageSessionTry\)/.test(overlay), 'it would ask again on every poll');
+  // One way in at a time: the pill replaces the toolbar, it does not join it.
+  const pill = overlay.slice(overlay.indexOf('function showPill()'), overlay.indexOf('function hidePill()'));
+  assert.ok(pill.includes("toolbar.style.display = 'none'"), 'showPill leaves the toolbar up');
+});

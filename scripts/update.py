@@ -20,6 +20,7 @@ The point of a script rather than a list of paths in a runbook: the list drifts
 every time the tool gains a file, and a missed file is a feature that silently
 stops working in that one project.
 """
+import json
 import re
 import shutil
 import sys
@@ -37,20 +38,23 @@ TITLED = "public/login.html"
 # itself — so it is read from there rather than carried along beside it. An
 # install made before the gate learned to sign in to that host has no meta to
 # preserve, and gains one here.
-def comments_meta(target: Path) -> str:
+def comments_of(target: Path) -> tuple[str, str]:
     index = target / "public" / "index.html"
     if not index.is_file():
-        return ""
+        return "", ""
     m = re.search(
         r'<script[^>]*src="(https?://[^"]+)/overlay\.js"[^>]*>',
         index.read_text(encoding="utf-8"),
     )
     if not m:
-        return ""
-    tag = m.group(0)
-    host = m.group(1)
-    room = re.search(r'data-room="([^"]*)"', tag)
-    return f'<meta name="fp-comments" content="{host}" data-room="{room.group(1) if room else ""}" />'
+        return "", ""
+    room = re.search(r'data-room="([^"]*)"', m.group(0))
+    return m.group(1), (room.group(1) if room else "")
+
+
+def comments_meta(target: Path) -> str:
+    host, room = comments_of(target)
+    return f'<meta name="fp-comments" content="{host}" data-room="{room}" />' if host else ""
 
 
 def rel_files(base: Path):
@@ -115,6 +119,19 @@ def main() -> None:
             if not dry:
                 shutil.copy2(src, dst)
             changed.append(rel)
+
+    # After the copy, never before: the template ships this file empty, so
+    # copying it over a configured install would quietly cut the bridge.
+    host, room = comments_of(target)
+    if host:
+        hostfile = target / "lib" / "comments-host.js"
+        wanted = (TEMPLATE / "lib" / "comments-host.js").read_text(encoding="utf-8")
+        wanted = wanted.replace("export const COMMENTS_HOST = '';", f"export const COMMENTS_HOST = {json.dumps(host)};")
+        wanted = wanted.replace("export const COMMENTS_ROOM = '';", f"export const COMMENTS_ROOM = {json.dumps(room)};")
+        if not hostfile.is_file() or hostfile.read_text(encoding="utf-8") != wanted:
+            if not dry:
+                hostfile.write_text(wanted, encoding="utf-8")
+            changed.append(f"lib/comments-host.js  (comments on {host}, room “{room}”)")
 
     edition = "Vercel" if has_api else "local"
     print(f"{'Would update' if dry else 'Updated'} {target}  ({edition} edition"

@@ -167,6 +167,22 @@ writes the token the overlay reads.
   whose comments are hosted apart. It could not before — it walked past the
   modal and reported success having learned nothing, which is why a Worker-backed
   room's map stayed at one screen.
+- The gate only covers people signing in from now on, so `api/comments-token`
+  covers the rest: a reader already past the password gets a comments session
+  from the session they hold, with the role that session carries and no more.
+  That is what an old cookie, an expired token and a reload in a tab opened last
+  week all need. `lib/comments-host.js` carries the host and room to the server
+  side; `update.py` fills it in from the overlay tag on the page itself, and
+  writes it after the copy, since the template ships it empty.
+- **One way in at a time.** `showLogin()` had always taken the toolbar down and
+  `showPill()` had not, so a reader who dismissed the panel was left with two
+  ways to comment on screen: a toolbar that could post nothing, and a pill asking
+  them to sign in. It read as two comment tools on one page. The pill now
+  replaces the toolbar, and a session arriving by any route takes down whatever
+  is still asking.
+- The bridge is attempted once per page load and **shared**: the first load
+  fires several requests, and two of them racing to the same 401 is what put a
+  pill beside a working toolbar in the first place.
 
 ### The map, on a real console
 Three things had to be true at once for **M** to be worth opening, and on a

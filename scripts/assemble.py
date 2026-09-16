@@ -17,12 +17,30 @@ so one Worker can hold several prototypes; it defaults to the target directory's
 name. Editing the tag by hand afterwards does the same thing and is easier to
 get subtly wrong.
 """
+import json
 import re
 import shutil
 import sys
 from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "template"
+
+
+COMMENTS_HOST_DOC = """/* Where this deployment's comments live, when they do not live here.
+
+   Written by assemble.py (from --comments/--room) and by update.py (read off
+   the overlay tag on public/index.html, so an older install gets it too). Empty
+   means the comments are served by this deployment itself and there is nothing
+   to bridge to. */
+export const COMMENTS_HOST = {host};
+export const COMMENTS_ROOM = {room};
+"""
+
+
+def write_comments_host(target: Path, host: str, room: str) -> None:
+    (target / "lib" / "comments-host.js").write_text(
+        COMMENTS_HOST_DOC.format(host=json.dumps(host), room=json.dumps(room)), encoding="utf-8"
+    )
 
 
 def opt(args: list[str], name: str) -> str | None:
@@ -106,6 +124,9 @@ def main() -> None:
         .replace("{{COMMENTS_META}}", meta),
         encoding="utf-8",
     )
+    # The same two facts on the server side, for /api/comments-token: a reader
+    # already past the gate gets a comments session without typing anything.
+    write_comments_host(target, comments.rstrip("/") if comments else "", (room or target.name) if comments else "")
     where = f", comments on {comments.rstrip('/')} in room \"{room or target.name}\"" if comments else ""
     print(f"OK: assembled at {target} (title: {title}{where})")
 

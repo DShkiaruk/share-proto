@@ -35,6 +35,12 @@
   // Per room as well as per host: a session belongs to one room now, so one
   // stored token for a whole host would be handed to the wrong room.
   const TOKEN_KEY = `fp_token::${API_ORIGIN}::${ROOM}`;
+  // Asked once per page load: on a page this tool does not gate, the request
+  // 404s into the host's own routing and must not be repeated every poll. The
+  // attempt is shared rather than flagged — the first load fires more than one
+  // request, and a flag let the second one put up the login while the first was
+  // still succeeding, which is how a pill ended up beside a live toolbar.
+  let pageSessionTry = null;
   let authToken = EMBED ? localStorage.getItem(TOKEN_KEY) : null;
   const apiUrl = (path) =>
     (EMBED ? API_ORIGIN : '') + path + (ROOM ? `?room=${encodeURIComponent(ROOM)}` : '');
@@ -679,7 +685,7 @@
 
   /* ---------- api ---------- */
 
-  async function api(method, body) {
+  async function api(method, body, retried = false) {
     const r = await fetch(apiUrl('/api/comments'), {
       method,
       headers: {
@@ -696,6 +702,12 @@
         // poll loop lands here every cycle — it must not re-open the modal.
         authToken = null;
         localStorage.removeItem(TOKEN_KEY);
+        // …but first: the page may already know who this is. A deployment with
+        // this tool's own gate in front of it can mint a comments session from
+        // the one the reader already has, which is the difference between "sign
+        // in again" and nothing at all. A session that predates the gate
+        // learning this trick lands here, and so does an expired token.
+        if (!retried && (await pageSession())) return api(method, body, true);
         if (loginDismissed()) showPill();
         else showLogin();
       } else {
@@ -705,6 +717,30 @@
     }
     if (!r.ok) throw new Error(`api ${r.status}`);
     return r.json();
+  }
+
+  /* The page's own gate, asked for a comments session on the reader's behalf.
+     Same origin, so the gate's cookie travels; it answers with a token for the
+     role that cookie carries, or with nothing at all — on a foreign page this
+     is a 404 and the modal follows, as before. */
+  function pageSession() {
+    if (!pageSessionTry) {
+      pageSessionTry = (async () => {
+        try {
+          const r = await fetch('/api/comments-token', { credentials: 'same-origin' });
+          if (!r.ok) return false;
+          const d = await r.json();
+          if (typeof d?.token !== 'string' || !d.token) return false;
+          authToken = d.token;
+          localStorage.setItem(TOKEN_KEY, authToken);
+          if (d.name) localStorage.setItem('fp_name', d.name);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+    }
+    return pageSessionTry;
   }
 
   /* ---------- embed login modal ---------- */
@@ -726,6 +762,12 @@
 
   function showPill() {
     if (loginPill || loginCard || state.role) return;
+    // The pill replaces the toolbar, it does not sit next to it. showLogin()
+    // has always taken the toolbar down; this path did not, so a reader who
+    // dismissed the modal was left looking at two ways to comment — a toolbar
+    // that could not post anything and a pill asking them to sign in.
+    setMode(false);
+    toolbar.style.display = 'none';
     loginPill = el('button', 'login-pill');
     loginPill.append(icon('comment'), el('span', null, 'Review comments'));
     loginPill.title = 'Sign in to leave design-review comments';
@@ -736,6 +778,13 @@
       showLogin();
     });
     root.appendChild(loginPill);
+  }
+
+  // The card, taken down without recording a dismissal: the reader did not
+  // dismiss it, it simply became unnecessary.
+  function dismissedLoginCard() {
+    loginCard?.remove();
+    loginCard = null;
   }
 
   function hidePill() {
@@ -1018,6 +1067,14 @@
         try {
           const data = await api('GET');
           state.role = data.role;
+          // Signed in is signed in: take down anything that is still asking.
+          // Another tab, a retried request or a restored session can all land
+          // here with a login on screen that no longer has a question to ask.
+          if (EMBED && state.role) {
+            hidePill();
+            dismissedLoginCard();
+            toolbar.style.display = '';
+          }
           state.name = data.name || '';
           state.serverV = Number(data.v) || 1;
           state.nav = data.nav || {};
