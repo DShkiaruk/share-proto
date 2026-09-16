@@ -127,6 +127,21 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.4 — 2026-09-16
+
+### A prototype that routes on the client
+- `template/vercel.json` sends every extensionless path to `index.html`, so a
+  deep link into an inner screen — and a reload on one — opens the prototype
+  instead of a Vercel 404. The local edition had `--spa` from the start; the
+  hosted one did not, and assembling single-file prototypes never exercised it.
+  Unconditional rather than a flag: `update.py` rewrites `vercel.json` on every
+  update, so a per-project setting would be erased by the next one.
+- The no-store header now covers the document under **any** path it is reached
+  by, not only `/` and `/index.html`. A cached deep link points at hashed assets
+  that the next deploy removes, which shows up as a white screen with no error.
+- `tests/unit/routing.test.mjs` pins both: the API, `/overlay.js`, `login.html`
+  and a build's hashed assets must still be served as themselves.
+
 ## v2.3 — 2026-09-14
 
 A room can move between deployments, and the tool stops spending the free tier

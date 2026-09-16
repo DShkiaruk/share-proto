@@ -54,6 +54,8 @@ because every step that gets skipped fails later, further from the cause.
 - **B. URL of an online prototype** (deployed anywhere, no local file): download it first — `curl -sL <url> -o /tmp/proto.html` — then follow all steps with that file. The result is a NEW protected URL; remind the user the old public URL stays open and they may want to take it down.
 - **C. Local project already deployed to Vercel** (has `.vercel/` link, e.g. made by this skill earlier or a plain static deploy): install the tool in place instead of assembling fresh — copy `template/`'s `api/`, `lib/`, `middleware.js`, `vercel.json`, `.vercelignore`, `package.json` deps, and `public/overlay.js`, `public/overlay.css`, `public/screenshot.js`, `public/login.html`, `public/favicon.svg` into the project; inject the overlay tag + viewport into its HTML entry (reuse the injection logic from `assemble.py`); then continue from step 3 (secrets) in that directory. Same domain keeps working. **If the project already has a v1 (public) Blob store**, follow the upgrade paragraph in step 4 first — the v2 API reads only private stores.
 
+- **D. A build of a real app** (many files, client-side routing — a Vite/Next static export): see "App-build case" under Local mode for the file layout; it is the same on Vercel, where client-side routes are already handled.
+
 If it's unclear which case applies, ask one short question.
 
 ## Local mode — no Vercel
@@ -66,7 +68,7 @@ Same system without deploying anywhere: `template/server.js` (plain Node >= 18, 
 4. **Smoke test**: same checks as step 6 below, against `http://localhost:<port>`.
 5. **Hand over**: same block as step 7 with the tunnel URL; add that comments persist in `data/comments.json` (delete the file to wipe; don't commit `data/` — it holds the passwords).
 
-**App-build case** (the prototype is a static build of a real app, many files — e.g. a demo build with mocked APIs): assemble any placeholder HTML first, then replace `public/index.html` and add the build's assets into `public/`, keeping `overlay.js`, `overlay.css`, `login.html`, `favicon.svg` in place; inject `<script src="/overlay.js" defer></script>` before `</body>` of the build's index.html (assemble.py's injection logic). If the app uses client-side routing, run `node server.js --spa` (serves index.html for extension-less paths). Never point such a build at a real backend — mock the data layer first; this server only adds the gate + comments.
+**App-build case** (the prototype is a static build of a real app, many files — e.g. a demo build with mocked APIs): assemble any placeholder HTML first, then replace `public/index.html` and add the build's assets into `public/`, keeping `overlay.js`, `overlay.css`, `login.html`, `favicon.svg` in place; inject `<script src="/overlay.js" defer></script>` before `</body>` of the build's index.html (assemble.py's injection logic). If the app routes on the client (React Router and friends), the Vercel edition already sends every extensionless path to `index.html` (`vercel.json`), and the local edition needs `node server.js --spa`. Without that, a reload on an inner screen is a 404 and the comments left there are unreachable. Never point such a build at a real backend — mock the data layer first; this server only adds the gate + comments.
 
 ## Embed mode — overlay on someone else's page
 
