@@ -52,11 +52,22 @@ because every step that gets skipped fails later, further from the cause.
 
 - **A. Local HTML file** (prototype not online yet): follow all steps below.
 - **B. URL of an online prototype** (deployed anywhere, no local file): download it first — `curl -sL <url> -o /tmp/proto.html` — then follow all steps with that file. The result is a NEW protected URL; remind the user the old public URL stays open and they may want to take it down.
-- **C. Local project already deployed to Vercel** (has `.vercel/` link, e.g. made by this skill earlier or a plain static deploy): install the tool in place instead of assembling fresh — copy `template/`'s `api/`, `lib/`, `middleware.js`, `vercel.json`, `.vercelignore`, `package.json` deps, and `public/overlay.js`, `public/overlay.css`, `public/screenshot.js`, `public/login.html`, `public/favicon.svg` into the project; inject the overlay tag + viewport into its HTML entry (reuse the injection logic from `assemble.py`); then continue from step 3 (secrets) in that directory. Same domain keeps working. **If the project already has a v1 (public) Blob store**, follow the upgrade paragraph in step 4 first — the v2 API reads only private stores.
+- **Already has this tool** (the project has `public/overlay.js`, `api/comments.js`, `server.js` or `worker/` from here — typically the user says "update"): none of the cases below. Go to **Updating an install**.
+- **C. Local project already deployed to Vercel, without this tool** (has a `.vercel/` link — a plain static deploy): install the tool in place instead of assembling fresh — copy `template/`'s `api/`, `lib/`, `middleware.js`, `vercel.json`, `.vercelignore`, `package.json` deps, and `public/overlay.js`, `public/overlay.css`, `public/screenshot.js`, `public/login.html`, `public/favicon.svg` into the project; inject the overlay tag + viewport into its HTML entry (reuse the injection logic from `assemble.py`); then continue from step 3 (secrets) in that directory. Same domain keeps working. **If the project already has a v1 (public) Blob store**, follow the upgrade paragraph in step 4 first — the v2 API reads only private stores.
 
 - **D. A build of a real app** (many files, client-side routing — a Vite/Next static export): see "App-build case" under Local mode for the file layout; it is the same on Vercel, where client-side routes are already handled.
 
 If it's unclear which case applies, ask one short question.
+
+## Updating an install
+
+The project already has the tool and the user wants the latest version. The link, both passwords, the store and every comment must come out of this unchanged — so never run `assemble.py`, never touch secrets or the Blob store, never re-link the project.
+
+1. `git -C ~/.claude/skills/share-proto pull` (the skill itself).
+2. `python3 ~/.claude/skills/share-proto/scripts/update.py <project-dir> --dry-run` — show the user what it will touch, then run it without `--dry-run`. It reads the edition off the project and keeps `public/index.html`, secrets and the Vercel link.
+3. Redeploy the way the project is served: Vercel — `vercel deploy --prod --yes` in the project; Worker — `cd worker && npx wrangler deploy`; local — restart `server.js`.
+4. `scripts/smoke.sh` against the real URL (ALL OK), then `scripts/verify.mjs` (step 6c). Where the passwords are: Vercel — step 3 set them for `development` too, so `vercel env pull "$TMPDIR/sp.env" --environment=development --yes` reads them (the file also holds the Blob token: delete it after); local — `data/secrets.json`; Worker — secrets cannot be read back, so ask the user (they hand these passwords out).
+5. Tell the user what changed for reviewers (read the newest `CHANGELOG.md` sections since their version) and what smoke and verify returned. No new share block — the link and passwords did not change; say so.
 
 ## Local mode — no Vercel
 

@@ -22,9 +22,19 @@ Read https://github.com/DShkiaruk/share-proto and build it for my prototype
 
 Then tell it where the prototype is — a local HTML file or a URL if it's already online — and, if it matters, which mode. Claude installs whatever is missing, walks you through a free Vercel signup if you need one, and finishes with **the share link and two passwords** — one for your team, one for the client.
 
+Already shared a prototype with it and want the latest fixes? Open Claude Code in that project's folder and paste:
+
+```
+Read https://github.com/DShkiaruk/share-proto and update it in my prototype
+```
+
+The link, the passwords and every comment stay as they are.
+
 One-time requirements: Claude Code and, for Vercel mode, a free [vercel.com](https://vercel.com) account (the agent opens signup for you, ~2 min).
 
 ## For Claude Code (agent instructions)
+
+When a user shares this repository link and asks to **update / upgrade** it in a prototype that already has it (the project has `public/overlay.js`, or `api/comments.js`, or `server.js`, or `worker/`), do not build anything and do not follow the input cases — follow **"Updating an install"** in `SKILL.md`. It keeps the link, the passwords and the comments; building again would issue new passwords and break every link already sent.
 
 When a user shares this repository link and asks to build/share/publish a prototype or add commenting to one:
 
