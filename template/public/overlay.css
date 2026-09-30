@@ -1733,7 +1733,10 @@
   padding: 2px 7px;
   border-radius: 9999px;
 }
-.map-chip.open { background: color-mix(in srgb, var(--unread) 16%, transparent); color: color-mix(in srgb, var(--unread) 78%, var(--ink)); }
+/* 64 %, not 78: the chip also sits on the grey of a card with no picture yet
+   (a screen with comments but no shot — a deleted one, typically), where the
+   lighter mix fell to 4.2:1. Toward --ink is darker in light, lighter in dark. */
+.map-chip.open { background: color-mix(in srgb, var(--unread) 16%, transparent); color: color-mix(in srgb, var(--unread) 64%, var(--ink)); }
 .map-chip.done { background: var(--muted); color: var(--muted-fg-2); }
 .map-total { font-size: 11px; color: var(--muted-fg-2); }
 .map-thumb {
@@ -1879,3 +1882,127 @@
 .sb-row2 .sort:first-child { margin-right: auto; }
 .status-seg button { padding: 5px 4px; }
 
+
+/* ---------- screen not found ---------- */
+
+/* A comment whose screen did not come up in this build. It is information,
+   not an error, so it takes no colour of its own: the neutral ground, a
+   crossed-out screen for a glyph, and the one decision it asks for. */
+.missing-note {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.missing-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.missing-title svg,
+.sb-missing svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--muted-fg-2);
+}
+.missing-note p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-fg-2);
+  overflow-wrap: anywhere;
+}
+.missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.missing-close,
+.sb-missing button {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--primary-fg);
+  background: var(--primary);
+}
+.root .missing-close,
+.root .sb-missing button {
+  color: var(--primary-fg);
+  background: var(--primary);
+}
+.root .missing-again {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 6px;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: background 150ms;
+}
+@media (hover: hover) {
+  .root .missing-again:hover {
+    background: var(--muted);
+  }
+}
+
+/* In the list: the note leads the where-line, in the ink colour so it reads
+   before the screen name that follows it. */
+.missing-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: bottom;
+  font-weight: 500;
+  color: var(--ink);
+}
+.missing-tag svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.sb-missing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sb-missing > span {
+  flex: 1;
+  min-width: 0;
+}
+.sb-missing button {
+  flex: none;
+  white-space: nowrap;
+}
+.root .sb-missing button.armed {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.root .sb-missing button[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+/* A finger, not a cursor: the same step up the status menu takes on touch. */
+@media (pointer: coarse) {
+  .root .missing-close,
+  .root .sb-missing button {
+    padding: 10px 14px;
+  }
+  .root .missing-again {
+    padding: 9px 13px;
+  }
+}

@@ -1,6 +1,6 @@
 import {
   clean, canSee, THREAD_ID, applyCreate, applyReply, applyEdit, applyResolve, applyDelete, applyPreview, navPatch,
-  nextNumber, assignNumbers, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
+  nextNumber, assignNumbers, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyKind, applyReact, applyTrail, applyMissing, missingPatch, STATUSES, KINDS, EMOJI,
 } from '../lib/threads.js';
 import { sanitizeImport, importEvents, importFile, mergeImport } from '../lib/importing.js';
 import { parseImages, parseImageDataUrl } from '../lib/media.js';
@@ -373,6 +373,13 @@ export default async function handler(req, res) {
     if (existing.trail?.length) return res.status(200).json({ thread: existing });
     await storage.appendEvent(eventPath(tid), { type: 'state', at: now, trail });
     patch = (s) => ({ threads: applyTrail(s.threads, tid, trail) });
+  } else if (action === 'missing') {
+    // Machine state, like the trail: whoever can see the thread may report that
+    // its screen did not come up in this build; whoever lands there clears it.
+    const missing = missingPatch(existing, body, now);
+    if (missing === undefined) return res.status(200).json({ thread: existing });
+    await storage.appendEvent(eventPath(tid), { type: 'state', at: now, missing, author, role });
+    patch = (s) => ({ threads: applyMissing(s.threads, tid, missing) });
   } else if (action === 'delete') {
     const own = existing.authorRole === role && existing.author === author;
     if (role !== 'designer' && !own) return res.status(403).json({ error: 'Not allowed' });

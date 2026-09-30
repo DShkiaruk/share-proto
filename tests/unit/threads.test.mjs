@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   clean, canSee, assemble, applyReply, applyEdit, applyResolve, applyDelete, applyCreate, navPatch,
   assignNumbers, nextNumber, sanitizeTrail, applyPreview, sanitizePage, sanitizeTheme,
-  applyStatus, applyKind, applyReact, applyTrail,
+  applyStatus, applyKind, applyReact, applyTrail, applyMissing, sanitizeMissing, missingPatch,
 } from '../../template/lib/threads.js';
 
 const T = '11111111-1111-4111-8111-111111111111';
@@ -256,6 +256,51 @@ test('applyTrail replaces only the named thread and sanitizes', () => {
   assert.equal(next[0].trail.length, 1);
   assert.equal(next[0].trail[0].txt, 'new');
   assert.deepEqual(next[1].trail, threads[1].trail);
+});
+
+// "Screen not found" is what a failed Go to comment leaves behind: a note that
+// this build did not have the comment's screen. It belongs to a version, and it
+// is machine state — never a status, never a line in the history.
+test('applyMissing marks one thread for one build, and clears it', () => {
+  const threads = [{ id: 'a' }, { id: 'b', missing: null }];
+  const marked = applyMissing(threads, 'a', { proto: 'v7', at: 5 });
+  assert.deepEqual(marked[0].missing, { proto: 'v7', at: 5 });
+  assert.equal(marked[1].missing, null);
+  assert.equal(applyMissing(marked, 'a', null)[0].missing, null);
+});
+
+test('sanitizeMissing keeps a version and a time, nothing else', () => {
+  assert.deepEqual(sanitizeMissing({ proto: 'v7', at: 5, evil: 1 }), { proto: 'v7', at: 5 });
+  assert.deepEqual(sanitizeMissing({ proto: '', at: 5 }), { proto: null, at: 5 });
+  assert.equal(sanitizeMissing({ proto: 'x'.repeat(200), at: 5 }).proto.length, 80);
+  assert.equal(sanitizeMissing(null), null);
+  assert.equal(sanitizeMissing('yes'), null);
+  assert.equal(sanitizeMissing({ proto: 'v7' }), null, 'a mark without a time is not a mark');
+});
+
+test('missingPatch: what the missing action writes, or undefined when nothing changes', () => {
+  assert.deepEqual(missingPatch({}, { missing: true, proto: 'v7' }, 9), { proto: 'v7', at: 9 });
+  assert.deepEqual(missingPatch({}, { missing: true }, 9), { proto: null, at: 9 });
+  // Marked for this build already: no second write (every reviewer who fails
+  // to get there would otherwise append the same fact).
+  assert.equal(missingPatch({ missing: { proto: 'v7', at: 1 } }, { missing: true, proto: 'v7' }, 9), undefined);
+  // A new build that also lacks the screen moves the mark to that build.
+  assert.deepEqual(missingPatch({ missing: { proto: 'v7', at: 1 } }, { missing: true, proto: 'v8' }, 9), { proto: 'v8', at: 9 });
+  assert.equal(missingPatch({ missing: { proto: 'v7', at: 1 } }, { missing: false }, 9), null);
+  assert.equal(missingPatch({}, { missing: false }, 9), undefined);
+});
+
+test('assemble: the latest "screen not found" event wins, and a clear removes it', () => {
+  const events = [first(T, 1)];
+  assert.equal(assemble(events)[0].missing, null);
+  events.push(ev(T, 2, { type: 'state', at: 2, missing: { proto: 'v1', at: 2 } }));
+  assert.deepEqual(assemble(events)[0].missing, { proto: 'v1', at: 2 });
+  events.push(ev(T, 3, { type: 'state', at: 3, missing: null }));
+  const t = assemble(events)[0];
+  assert.equal(t.missing, null);
+  // It is not a status change: the comment stays open with an empty history.
+  assert.equal(t.status, 'open');
+  assert.deepEqual(t.history, []);
 });
 
 test('sanitizeTheme keeps a restorable mark set and refuses everything else', () => {

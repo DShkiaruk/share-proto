@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Removed screen fixture</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }
+  button { margin-right: 8px; padding: 8px 12px; }
+</style>
+</head>
+<body>
+<!-- A prototype the day after a screen was deleted. "Change flight" existed in
+     the last build, reviewers commented on it and the overlay learned two ways
+     in (from Flight and from Seats). In this build both old entry buttons lead
+     to a brand-new screen the graph has never seen, so a walk that follows the
+     old way ends somewhere with no known way out. Screens switch in JS, with no
+     hash: the only way to reach one is to click through, as in the prototype
+     the feedback came from. -->
+<main id="app"></main>
+<script>
+  const screens = {
+    Trip: '<h1>Trip</h1><button data-go="Flight">Flight</button><button data-go="Seats">Seats</button>',
+    Flight: '<h1>Flight</h1><button data-go="Trip">Back</button><button data-go="Flight options">Change flight</button>',
+    Seats: '<h1>Seats</h1><button data-go="Trip">Back</button><button data-go="Flight options">Pick another flight</button>',
+    'Flight options': '<h1>Flight options</h1><p>New in this build.</p>',
+  };
+  const show = (n) => (document.getElementById('app').innerHTML = screens[n]);
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-go]');
+    if (b) show(b.dataset.go);
+  });
+  show('Trip');
+</script>
+</body>
+</html>

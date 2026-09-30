@@ -97,6 +97,7 @@
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
     chevron: svg('<path d="m6 9 6 6 6-6"/>'),
+    screenOff: svg('<path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m3 3 18 18"/>'),
     moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
     sun: svg(
       '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -683,6 +684,11 @@
     (pageMatches(t.page) || (samePath(t.page) && Boolean(locateAnchor(t.anchor).el))) &&
     (!t.screenLabel || labelsMatch(t.screenLabel, state.screen));
 
+  // "Screen not found": someone's walk could not reach this comment's screen in
+  // this build. A mark left on another build says nothing about this one.
+  const isMissing = (t) =>
+    Boolean(t.missing) && (!t.missing.proto || !state.proto || t.missing.proto === state.proto);
+
   /* ---------- api ---------- */
 
   async function api(method, body, retried = false) {
@@ -1087,11 +1093,12 @@
           // Also on first load, not only when the screen changes: a designer who
           // opens the prototype and stays put still fills that screen's card.
           autoShot();
+          healMissing();
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
           const sig = JSON.stringify([
             state.threads.map((t) => [
-              t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.n,
+              t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.n, t.missing?.proto ?? (t.missing ? 1 : 0),
               t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
             ]),
             state.versions.map((v) => [v.id, v.label]),
@@ -1153,15 +1160,19 @@
   }
 
   let stickyEl = null;
-  function toastSticky(text) {
+  let stickyWalk = false; // the sticky is announcing a walk the overlay is driving
+  function toastSticky(text, walk = false) {
     clearSticky();
     stickyEl = el('div', 'toast sticky', text);
+    stickyWalk = walk;
     root.appendChild(stickyEl);
   }
   function clearSticky() {
     stickyEl?.remove();
     stickyEl = null;
+    stickyWalk = false;
   }
+  const WALK_TOAST = 'Taking you to the comment… · Esc to stop';
 
   /* ---------- toolbar ---------- */
 
@@ -1918,6 +1929,8 @@
     popover.appendChild(meta);
 
     if (!pinEl && !onThisScreen(t)) {
+      const gone = isMissing(t);
+      if (gone) popover.appendChild(missingNote(t));
       if (t.preview) {
         const pv = el('img', 'popover-preview');
         setImg(pv, t.preview);
@@ -1925,14 +1938,16 @@
         pv.addEventListener('click', () => openLightbox(t.preview));
         popover.appendChild(pv);
       }
-      const go = el('button', 'goto-row');
-      go.append(icon('goto'), el('span', null, 'Go to comment'));
-      if (t.screenLabel) go.appendChild(el('span', 'goto-screen', t.screenLabel));
-      go.addEventListener('click', () => {
-        closePopover();
-        goTo(t);
-      });
-      popover.appendChild(go);
+      if (!gone) {
+        const go = el('button', 'goto-row');
+        go.append(icon('goto'), el('span', null, 'Go to comment'));
+        if (t.screenLabel) go.appendChild(el('span', 'goto-screen', t.screenLabel));
+        go.addEventListener('click', () => {
+          closePopover();
+          goTo(t);
+        });
+        popover.appendChild(go);
+      }
     }
 
     const msgs = el('div', 'messages');
@@ -2171,7 +2186,7 @@
     return steps;
   }
 
-  function waitForScreen(fp, timeout) {
+  function waitForScreen(fp, timeout, my = trip) {
     return new Promise((resolve) => {
       const t0 = Date.now();
       const iv = setInterval(() => {
@@ -2179,7 +2194,7 @@
         if (reachedLabel(fp)) {
           clearInterval(iv);
           resolve(true);
-        } else if (Date.now() - t0 > timeout) {
+        } else if (my !== trip || Date.now() - t0 > timeout) {
           clearInterval(iv);
           resolve(false);
         }
@@ -2251,8 +2266,9 @@
   // anchored element appears. Stops early at the first step that cannot be found.
   // Replay a recorded sequence of in-screen clicks. Used both to reopen the
   // state a comment was left in and to make a transition's control appear.
-  async function replaySteps(steps, until = null) {
+  async function replaySteps(steps, until = null, my = trip) {
     for (let i = 0; i < steps.length; i++) {
+      if (my !== trip) return false;
       if (until?.()) return true;
       const loc = locateAnchor(steps[i].anchor);
       if (!loc.el) continue; // a stale step must not block the ones that still resolve
@@ -2263,9 +2279,10 @@
     return Boolean(until?.());
   }
 
-  async function replayTrail(t) {
+  async function replayTrail(t, my = trip) {
     const steps = t.trail || [];
     for (let i = 0; i < steps.length; i++) {
+      if (my !== trip) return false;
       if (locateAnchor(t.anchor).pos) return true;
       const loc = locateAnchor(steps[i].anchor);
       if (!loc.el) continue; // a stale step must not block the ones that still resolve
@@ -2284,8 +2301,8 @@
   async function openAtState(t, my = trip) {
     cancelJump();
     if (!locateAnchor(t.anchor).pos && t.trail?.length && !containerOpen(t)) {
-      toastSticky('Opening the state with this comment…');
-      await replayTrail(t);
+      toastSticky('Opening the state with this comment… · Esc to stop', true);
+      await replayTrail(t, my);
       if (my !== trip) return;
       clearSticky();
       syncScreen(); // a reopened dialog may carry its own heading
@@ -2295,33 +2312,57 @@
   }
 
   // One click from anywhere: other page → other screen → closed state → pin.
-  async function goTo(t) {
+  // opts.retry walks even to a screen marked not found; opts.continued and
+  // opts.banned carry a walk across its one reload-teleport.
+  let walkFor = null; // the thread the current walk is taking the reader to
+  async function goTo(t, opts = {}) {
     const my = ++trip;
+    walkFor = t.id;
     if (state.presenting) togglePresent();
     if (state.pinsHidden) setPinsHidden(false);
     // Keep the list up where there is room for both: walking a review means
     // going back to it after every comment, and every tool that does this well
     // (Figma, Air, Framer) leaves the panel where it was.
     if (innerWidth < 900) setSidebar(false);
+    // Already known not to be in this build: open it here, walk nowhere.
+    if (isMissing(t) && !opts.retry) return openMissing(t);
     const { path, hash } = splitPage(t.page || location.pathname);
     if ((path || '/') !== location.pathname) {
+      // A page deleted from the build is a 404 — no overlay there to bring the
+      // reader back, and no way to close the comment. Ask before going.
+      toastSticky(WALK_TOAST, true);
+      const gone = await pageGone(path || '/');
+      if (my !== trip) return;
+      if (gone) {
+        clearSticky();
+        markMissing(t);
+        return openMissing(t);
+      }
       // Another document: the deep-link boot on that page finishes the trip.
-      toastSticky('Taking you to the comment…');
       location.href = deepLinkUrl(t);
       return;
     }
     if (!onThisScreen(t) && t.page && hash !== location.hash) {
       // Same document, another route: the hash is authoritative and free —
       // no need to walk the learned graph (which may not know the way back).
-      toastSticky('Taking you to the comment…');
+      toastSticky(WALK_TOAST, true);
       location.hash = hash;
       await waitFor(() => onThisScreen(t) || labelsMatch(screenLabel(), t.screenLabel), 3000);
       if (my !== trip) return;
       clearSticky();
       syncScreen(); // the mutation observer is debounced; onThisScreen() must see the new label now
     }
-    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t, my);
+    if (t.screenLabel && !labelsMatch(screenLabel(), t.screenLabel)) return autoNavigate(t, my, opts);
     return openAtState(t, my);
+  }
+
+  async function pageGone(path) {
+    try {
+      const r = await fetch(path, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' });
+      return r.status === 404;
+    } catch {
+      return false; // offline, blocked: not evidence of anything
+    }
   }
 
   // Walk the learned graph to a screen label with per-hop re-planning: bad
@@ -2329,10 +2370,13 @@
   // route, teleport via reload (prototypes restart there) and let the boot
   // code finish the trip using `jump`. Returns whether the label was reached.
   let reloading = false;
-  async function navigateToLabel(target, my = trip, jump = null) {
+  async function navigateToLabel(target, my = trip, jump = null, carried = []) {
     if (navigating || reloading) return false;
     navigating = true;
-    const banned = new Set();
+    // Edges that already failed on this trip — including before its reload.
+    // Forgetting them across the reload is what made a walk to a deleted
+    // screen retry the same dead ends and reload again, forever.
+    const banned = new Set(carried);
     try {
       for (let hop = 0; hop < 12; hop++) {
         const from = screenLabel();
@@ -2341,6 +2385,11 @@
         if (!route || !route.length) {
           if (jump && bootScreen && !labelsMatch(bootScreen, from) && findRoute(bootScreen, target, banned)) {
             localStorage.setItem(jump.key, jump.value);
+            try {
+              sessionStorage.setItem('fp_jump_banned', JSON.stringify([...banned]));
+            } catch {
+              /* private mode: the one-teleport rule still ends the trip */
+            }
             reloading = true;
             // If the reload is refused (an unsaved-changes prompt), navigation
             // must not stay dead for the rest of the session.
@@ -2358,7 +2407,7 @@
           // the ones recorded with the edge, then look again.
           const steps = (state.navTrail || {})[`${from}>${step.to}`];
           if (steps?.length) {
-            await replaySteps(steps);
+            await replaySteps(steps, null, my);
             if (my !== trip) return false;
             loc = locateAnchor(step.anchor);
           }
@@ -2368,7 +2417,7 @@
           continue;
         }
         synthClick(loc.el);
-        const arrived = await waitForScreen(step.to, 5000);
+        const arrived = await waitForScreen(step.to, 5000, my);
         if (my !== trip) return false; // a newer goTo took over
         if (!arrived) banned.add(`${from}>${step.to}`);
       }
@@ -2380,23 +2429,165 @@
     }
   }
 
-  async function autoNavigate(t, my = trip) {
+  async function autoNavigate(t, my = trip, opts = {}) {
     if (navigating || reloading) return;
     // Multi-page prototypes: the thread remembers its page — navigate there
     // directly; the deep-link boot on that page finishes the jump.
     if (!pageMatches(t.page)) {
-      toastSticky('Taking you to the comment…');
+      toastSticky(WALK_TOAST, true);
       location.href = deepLinkUrl(t);
       return;
     }
-    toastSticky('Taking you to the comment…');
+    toastSticky(WALK_TOAST, true);
     const target = graphTarget(t.screenLabel);
-    const ok = await navigateToLabel(target, my, { key: 'fp_jump', value: t.id });
+    // Failing to follow a way the graph knew is evidence the screen is not in
+    // this build; knowing no way at all is not — then the reader is asked.
+    const known = Boolean(findRoute(screenLabel(), target) || (bootScreen && findRoute(bootScreen, target)));
+    // One reload-teleport per trip: a continued trip never reloads again.
+    const jump = opts.continued ? null : { key: 'fp_jump', value: t.id };
+    const ok = await navigateToLabel(target, my, jump, opts.banned);
     if (my !== trip || reloading) return;
     syncScreen();
     clearSticky();
-    if (ok || labelsMatch(state.screen, t.screenLabel)) openAtState(state.threads.find((x) => x.id === t.id) || t, my);
-    else armGuided(t);
+    const live = state.threads.find((x) => x.id === t.id) || t;
+    if (ok || labelsMatch(state.screen, t.screenLabel)) openAtState(live, my);
+    else if (known) {
+      markMissing(live);
+      openMissing(live);
+    } else armGuided(t);
+  }
+
+  // The comment's card, here, with the note that its screen did not come up.
+  // Still armed: if the reader finds the screen by hand, it lands on it.
+  function openMissing(t) {
+    cancelJump();
+    state.pendingJump = t.id;
+    openThread(t.id, null);
+  }
+
+  // The fact is about a screen, not one comment: every open comment on the
+  // same screen of the same page gets the note, so the designer can close them
+  // together. Written for this build only (proto), and only once per build.
+  async function markMissing(t) {
+    const proto = state.proto || null;
+    const todo = state.threads.filter(
+      (x) =>
+        (x.id === t.id ||
+          (x.screenLabel === t.screenLabel && (x.page || '') === (t.page || '') && !isResolvedStatus(statusOf(x)))) &&
+        !(x.missing && (x.missing.proto || null) === proto)
+    );
+    if (!todo.length) return;
+    for (const x of todo) x.missing = { proto, at: Date.now() }; // seen at once, before the server answers
+    if (state.sidebar) renderSidebar();
+    for (const x of todo) {
+      try {
+        await api('POST', { action: 'missing', threadId: x.id, missing: true, proto });
+      } catch {
+        /* an older server: the note lives in this tab only */
+      }
+    }
+    refresh();
+  }
+
+  // Landing on the screen proves it exists: whoever gets there clears the note.
+  const healed = new Set();
+  function healMissing() {
+    for (const t of state.threads) {
+      if (!t.missing || healed.has(t.id) || !onThisScreen(t)) continue;
+      healed.add(t.id);
+      t.missing = null;
+      api('POST', { action: 'missing', threadId: t.id, missing: false })
+        .then(() => refresh())
+        .catch(() => healed.delete(t.id));
+    }
+  }
+
+  // Esc during a walk: stop driving the prototype, and show what was asked for
+  // where it can be read (and closed, or deleted) instead of nowhere.
+  function stopWalk() {
+    const t = walkFor && state.threads.find((x) => x.id === walkFor);
+    trip++; // every stage of a walk checks its trip after each await
+    walkFor = null;
+    cancelJump();
+    toast('Stopped');
+    if (t) openThread(t.id, pinEls.get(t.id) || null);
+  }
+
+  // The not-found note in a comment's card: what happened, then the two ways
+  // forward — close it, or ask again if the reader believes the screen exists.
+  function missingNote(t) {
+    const box = el('div', 'missing-note');
+    const title = el('div', 'missing-title');
+    title.append(icon('screenOff'), el('span', null, 'Screen not found'));
+    const where = t.screenLabel || (t.page ? splitPage(t.page).path : 'This screen');
+    box.append(
+      title,
+      el('p', null, `“${where}” didn’t come up in this version of the prototype. It may have been removed or renamed.`)
+    );
+    const actions = el('div', 'missing-actions');
+    if (!isResolvedStatus(statusOf(t)) && state.serverV >= 2) {
+      const designer = state.role === 'designer';
+      const close = el('button', 'missing-close', designer ? 'Close — screen removed' : 'Mark done');
+      close.addEventListener('click', () =>
+        postThread(
+          designer
+            ? { action: 'status', threadId: t.id, status: 'wont', note: SCREEN_REMOVED }
+            : { action: 'status', threadId: t.id, status: 'done' },
+          designer ? 'Closed — screen removed' : 'Marked as Done'
+        )
+      );
+      actions.appendChild(close);
+    }
+    const again = el('button', 'missing-again', 'Try again');
+    again.addEventListener('click', () => {
+      closePopover();
+      goTo(t, { retry: true });
+    });
+    actions.appendChild(again);
+    box.appendChild(actions);
+    return box;
+  }
+  const SCREEN_REMOVED = 'Screen removed';
+
+  // Designer, in the list: close every open not-found comment at once. Two
+  // clicks — the first only asks — because it touches many comments.
+  function missingBanner(gone) {
+    const box = el('div', 'sb-missing');
+    const n = gone.length;
+    const text = el('span', null, `${n} ${n === 1 ? 'comment points' : 'comments point'} to screens this version doesn’t have`);
+    const pic = icon('screenOff');
+    const btn = el('button', null, 'Close all');
+    let armed = false;
+    btn.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        btn.textContent = `Close ${n}?`;
+        btn.classList.add('armed');
+        setTimeout(() => {
+          if (!btn.isConnected || btn.disabled) return;
+          armed = false;
+          btn.textContent = 'Close all';
+          btn.classList.remove('armed');
+        }, 3000);
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Closing…';
+      let done = 0;
+      for (const t of gone) {
+        try {
+          await api('POST', { action: 'status', threadId: t.id, status: 'wont', note: SCREEN_REMOVED });
+          done++;
+        } catch {
+          /* counted below */
+        }
+      }
+      await refresh();
+      renderAll();
+      toast(done === n ? `Closed ${n} — screen removed` : `Closed ${done} of ${n} — try the rest again`);
+    });
+    box.append(pic, text, btn);
+    return box;
   }
 
   // Map → screen: same walk, no thread at the end.
@@ -2413,13 +2604,14 @@
     }
   }
 
-  async function goToScreen(label) {
+  async function goToScreen(label, opts = {}) {
     if (navigating || reloading) return false; // a walk is already in flight
     const my = ++trip;
+    walkFor = null;
     if (reachedLabel(label)) return true;
-    toastSticky(`Taking you to “${label}”…`);
+    toastSticky(`Taking you to “${label}”… · Esc to stop`, true);
     const jump = teleportAllowed(label) ? { key: 'fp_jump_label', value: label } : null;
-    const ok = await navigateToLabel(graphTarget(label), my, jump);
+    const ok = await navigateToLabel(graphTarget(label), my, jump, opts.banned);
     if (my !== trip || reloading) return ok;
     clearSticky();
     syncScreen();
@@ -2761,6 +2953,8 @@
       list.appendChild(chip);
     }
     const match = threadsInView();
+    const gone = state.role === 'designer' ? match.filter((t) => isMissing(t) && !isResolvedStatus(statusOf(t))) : [];
+    if (gone.length && state.serverV >= 2) list.appendChild(missingBanner(gone));
     const fresh = match.filter(isNew);
     const screens = withinNewWindow() ? newScreens() : [];
     if ((fresh.length || screens.length) && withinNewWindow()) {
@@ -2799,7 +2993,15 @@
         if (!t.anchor) extras.push('About this screen');
         else if (t.anchor.container?.name) extras.push(`in ${t.anchor.container.name}`);
         if (t.messages.length > 1) extras.push(`${t.messages.length - 1} ${t.messages.length === 2 ? 'reply' : 'replies'}`);
-        if (extras.length) row.appendChild(el('div', 'replies', extras.join(' · ')));
+        const whereLine = el('div', 'replies');
+        if (isMissing(t)) {
+          row.classList.add('missing');
+          const tag = el('span', 'missing-tag');
+          tag.append(icon('screenOff'), el('span', null, 'Screen not found'));
+          whereLine.appendChild(tag);
+        }
+        if (extras.length) whereLine.append((isMissing(t) ? ' · ' : '') + extras.join(' · '));
+        if (whereLine.childNodes.length) row.appendChild(whereLine);
         row.addEventListener('click', () => goTo(t));
         // Desktop: hover shows the preview card; touch: an eye button does.
         row.addEventListener('pointerenter', () => {
@@ -3600,7 +3802,9 @@
 
   // Escape closes the topmost thing the overlay has open.
   function closeTopLayer() {
-    if (lightbox) closeLightbox();
+    // A walk moving the prototype on its own is the most urgent thing to stop.
+    if (stickyWalk) stopWalk();
+    else if (lightbox) closeLightbox();
     else if (mapCompose) closeMapCompose();
     else if (state.map) closeMap();
     else if (statusMenu) closeStatusMenu();
@@ -3693,7 +3897,10 @@
         lastNavClick = null;
       }
       detectTheme();
-      if (state.screen !== prevScreen) autoShot();
+      if (state.screen !== prevScreen) {
+        autoShot();
+        healMissing();
+      }
       positionPins();
       checkPendingJump();
       // Prototypes mutate constantly (animations, timers); rebuilding the open
@@ -3846,6 +4053,16 @@
     history.replaceState(null, '', bootUrl.pathname + bootUrl.search + bootUrl.hash);
   }
 
+  // A reload-teleport hands its failed edges to the trip it continues.
+  let carriedBans = [];
+  try {
+    carriedBans = JSON.parse(sessionStorage.getItem('fp_jump_banned') || '[]');
+    sessionStorage.removeItem('fp_jump_banned');
+    if (!Array.isArray(carriedBans)) carriedBans = [];
+  } catch {
+    carriedBans = [];
+  }
+
   setTimeout(() => {
     state.screen = screenLabel();
     state.screenLabel = screenLabel();
@@ -3858,16 +4075,20 @@
     const jumpLabel = localStorage.getItem('fp_jump_label');
     if (jumpLabel) {
       localStorage.removeItem('fp_jump_label');
-      setTimeout(() => goToScreen(jumpLabel), 800);
+      setTimeout(() => goToScreen(jumpLabel, { banned: carriedBans }), 800);
     }
+    const continued = Boolean(localStorage.getItem('fp_jump'));
     const jump = localStorage.getItem('fp_jump') || deepLink;
     if (jump) {
       localStorage.removeItem('fp_jump');
-      toastSticky('Taking you to the comment…');
+      toastSticky(WALK_TOAST, true);
+      walkFor = jump; // Esc before the walk begins still opens the comment
+      const bootTrip = trip;
       const go = () => {
+        if (trip !== bootTrip) return; // Esc'd before the walk began
         const t = state.threads.find((x) => x.id === jump);
         if (t) {
-          goTo(t);
+          goTo(t, { continued, banned: continued ? carriedBans : [] });
         } else clearSticky();
       };
       if (state.threads.length) setTimeout(go, 800);

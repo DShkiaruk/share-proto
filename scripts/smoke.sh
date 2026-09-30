@@ -114,6 +114,16 @@ TRAIL='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#ro
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$TRAIL" "$API" | jq_ 'print(len(d.get("thread",{}).get("trail",[])), d["thread"]["trail"][0]["txt"])')" "1 Acme" "a comment can be taught the way back"
 RETEACH='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#other","t":"button","txt":"Other"},"txt":"Other"}]}'
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$RETEACH" "$API" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
+# A walk that could not reach a comment's screen leaves a note for that build —
+# a note, not a status — and whoever lands on the screen clears it. (A comment
+# the Vercel edition has just created carries no `status` yet, only
+# `resolved: false`; the overlay reads that as open, and so does this check.)
+MISS='{"action":"missing","threadId":"'"$LEARN"'","missing":true,"proto":"smoke-build"}'
+check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$MISS" "$API" | jq_ 't=d.get("thread",{}); print((t.get("missing") or {}).get("proto"), t.get("status") or ("done" if t.get("resolved") else "open"), len(t.get("history") or []))')" "smoke-build open 0" "a comment can be marked screen-not-found for one build, status untouched"
+check "$(code -b "$TMP/client.jar" -K "$TMP/client.conf" -H 'Content-Type: application/json' -d "$MISS" "$API")" 404 "a client cannot mark a comment it cannot see"
+check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | jq_ 't=[x for x in d["threads"] if x["id"]=="'"$LEARN"'"]; print((t[0].get("missing") or {}).get("proto") if t else "gone")')" "smoke-build" "the mark comes back over GET"
+UNMISS='{"action":"missing","threadId":"'"$LEARN"'","missing":false}'
+check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$UNMISS" "$API" | jq_ 'print(d.get("thread",{}).get("missing"))')" "None" "and landing on the screen clears it"
 curl -s -o /dev/null -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$LEARN"'"}' "$API"
 
 # A room can be moved in: verbatim, designer-only, and idempotent.

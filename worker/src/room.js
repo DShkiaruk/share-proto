@@ -17,7 +17,7 @@
 
 import {
   clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme,
-  applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI,
+  applyStatus, applyResolve, applyKind, applyReact, applyTrail, applyMissing, missingPatch, STATUSES, KINDS, EMOJI,
 } from '../../template/lib/threads.js';
 import { applyShot, applyMapMeta, applyVersionEvent, labelKey } from '../../template/lib/state.js';
 import { parseImages, parseImageDataUrl } from '../../template/lib/media.js';
@@ -462,6 +462,12 @@ export class Room {
       if (!trail.length) return err(400, 'Empty trail');
       if (thread.trail?.length) return ok({ thread });
       this.threads = applyTrail(this.threads, tid, trail);
+    } else if (action === 'missing') {
+      // Machine state, like the trail: whoever can see the thread may report
+      // that its screen did not come up in this build; whoever lands there clears it.
+      const missing = missingPatch(thread, body, now);
+      if (missing === undefined) return ok({ thread });
+      this.threads = applyMissing(this.threads, tid, missing);
     } else if (action === 'delete') {
       const own = thread.authorRole === role && thread.author === author;
       if (role !== 'designer' && !own) return err(403, 'Not allowed');

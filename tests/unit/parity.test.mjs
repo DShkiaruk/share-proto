@@ -61,7 +61,7 @@ test('the three servers answer GET with the same fields', () => {
 test('every server takes its thread rules from template/lib', () => {
   for (const [name, src] of Object.entries(SERVERS)) {
     assert.match(src, /threads\.js'\)?;?/, `${name} does not import the shared thread rules`);
-    for (const fn of ['canSee', 'sanitizeTrail', 'applyTrail', 'applyStatus', 'applyReact']) {
+    for (const fn of ['canSee', 'sanitizeTrail', 'applyTrail', 'applyStatus', 'applyReact', 'applyMissing', 'missingPatch']) {
       assert.ok(src.includes(fn), `${name} does not use ${fn} from the shared rules`);
     }
   }

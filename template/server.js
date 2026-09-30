@@ -30,7 +30,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18
 
 const { createToken, sessionFromHeaders, sessionAllowsRoom, roomPasswords, roleFor } = await import('./lib/session.js');
 const { applyCors, roomFromReq } = await import('./lib/cors.js');
-const { clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
+const { clean, canSee, THREAD_ID, assignNumbers, nextNumber, sanitizeTrail, sanitizePage, sanitizeTheme, applyStatus, applyResolve, applyKind, applyReact, applyTrail, applyMissing, missingPatch, STATUSES, KINDS, EMOJI } = await import('./lib/threads.js');
 const { applyVersionEvent, applyShot, applyMapMeta, labelKey } = await import('./lib/state.js');
 const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 const { sanitizeImport, importFile, mergeImport } = await import('./lib/importing.js');
@@ -480,6 +480,10 @@ async function apiComments(req, res, session) {
     if (!trail.length) return json(res, 400, { error: 'Empty trail' });
     if (thread.trail?.length) return json(res, 200, { thread });
     S.threads = applyTrail(S.threads, tid, trail);
+  } else if (action === 'missing') {
+    const missing = missingPatch(thread, body, now);
+    if (missing === undefined) return json(res, 200, { thread });
+    S.threads = applyMissing(S.threads, tid, missing);
   } else if (action === 'delete') {
     const own = thread.authorRole === role && thread.author === author;
     if (role !== 'designer' && !own) return json(res, 403, { error: 'Not allowed' });

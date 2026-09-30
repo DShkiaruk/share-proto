@@ -152,6 +152,16 @@ check "$(api "$TEAM_R" -d "$TRAIL" "$D/api/comments?room=pr-7" | jq_ 'print(len(
 RETEACH='{"action":"trail","threadId":"'"$LEARN"'","trail":[{"anchor":{"path":"#other","t":"button","txt":"Other"},"txt":"Other"}]}'
 check "$(api "$TEAM_R" -d "$RETEACH" "$D/api/comments?room=pr-7" | jq_ 'print(d["thread"]["trail"][0]["txt"])')" "Acme" "and is not re-taught once it knows"
 check "$(code -X POST -H "Authorization: Bearer $TEAM_R" -H 'Content-Type: application/json' -d '{"action":"trail","threadId":"'"$LEARN"'","trail":[]}' "$D/api/comments?room=pr-7")" 400 "an empty trail teaches nothing"
+# A walk that could not reach a comment's screen leaves a note for that build —
+# a note, not a status — and whoever lands on the screen clears it. (A comment
+# the Vercel edition has just created carries no `status` yet, only
+# `resolved: false`; the overlay reads that as open, and so does this check.)
+MISS='{"action":"missing","threadId":"'"$LEARN"'","missing":true,"proto":"smoke-build"}'
+check "$(api "$TEAM_R" -d "$MISS" "$D/api/comments?room=pr-7" | jq_ 't=d.get("thread",{}); print((t.get("missing") or {}).get("proto"), t.get("status") or ("done" if t.get("resolved") else "open"), len(t.get("history") or []))')" "smoke-build open 0" "a comment can be marked screen-not-found for one build, status untouched"
+check "$(code -X POST -H "Authorization: Bearer $CLIENT_R" -H 'Content-Type: application/json' -d "$MISS" "$D/api/comments?room=pr-7")" 404 "a client cannot mark a comment it cannot see"
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="'"$LEARN"'"]; print((t[0].get("missing") or {}).get("proto") if t else "gone")')" "smoke-build" "the mark comes back over GET"
+UNMISS='{"action":"missing","threadId":"'"$LEARN"'","missing":false}'
+check "$(api "$TEAM_R" -d "$UNMISS" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("thread",{}).get("missing"))')" "None" "and landing on the screen clears it"
 
 # An edge remembers the in-screen clicks that make its control reachable.
 EDGE='{"action":"edge","from":"Home","to":"Report","anchor":{"path":"a#r","t":"a","txt":"Go to report"},"trail":[{"anchor":{"path":"button#adv","t":"button","txt":"Advanced"},"txt":"Advanced"}]}'

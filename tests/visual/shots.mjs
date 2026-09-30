@@ -72,6 +72,12 @@ const click = async (page, loc) => {
     proto: 'build-from-last-week',
   });
   await api(d, { action: 'version', id: 'build-from-last-week' });
+  // Two comments on a screen this build no longer has: the list shows the note
+  // on their rows and the designer's close-all banner above them.
+  for (const text of ['Screen removed in this build — the old fare table.', 'Fares: the second column header wraps.']) {
+    const m = await api(d, { action: 'create', text, screen: 'Fares', screenLabel: 'Fares', anchor: { path: 'main > table', t: 'table', txt: null, fx: 0.4, fy: 0.3 }, page: '/' });
+    await api(d, { action: 'missing', threadId: m.thread.id, missing: true, proto });
+  }
   await api(d, { action: 'version-label', id: 'build-from-last-week', label: 'Sprint 11' });
   await d.evaluate(() => (document.querySelector('[data-fp-host]').style.visibility = 'hidden'));
   const shot = await d.screenshot({ type: 'jpeg', quality: 70 });
@@ -133,10 +139,11 @@ const CONTRAST_JS = `(() => {
     '.place', '.role', '.theme-tag', '.kind-tag', '.map-name', '.present-dot', '.ver-label', '.seg button',
     // the map's own vocabulary
     '.map-band', '.map-band-note', '.map-chip', '.map-total', '.map-ph-title', '.map-ph-note', '.map-act',
-    '.start-flag', '.here-flag'];
+    '.start-flag', '.here-flag', '.missing-tag', '.missing-title', '.missing-note p', '.missing-close',
+    '.missing-again', '.sb-missing > span', '.sb-missing button'];
   // Glyphs that carry meaning on their own are graphics, not text: WCAG 1.4.11
   // asks 3:1 of them, and nothing of a shape that only decorates a label.
-  const graphics = ['.st-ico', '.kind-ico', '.row-dot'];
+  const graphics = ['.st-ico', '.kind-ico', '.row-dot', '.missing-title svg', '.missing-tag svg', '.sb-missing svg'];
   const out = [];
   const seen = new Set();
   for (const sel of graphics) for (const el of r.querySelectorAll(sel)) {
@@ -232,6 +239,20 @@ async function shootAll(theme, device) {
   await click(page, sr(page, '.sb-row').filter({ hasText: 'dark version' }).first()); await page.waitForTimeout(600);
   await shot('03c-popover-other-theme');
   report.push({ state: `theme-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
+  // A comment whose screen is not in this build: its card opens in place with
+  // the note. The gate has to see the note itself, or it measures nothing.
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await openList(page);
+  await click(page, sr(page, '.sb-row').filter({ hasText: 'old fare table' }).first()); await page.waitForTimeout(600);
+  await shot('03d-popover-not-found');
+  report.push({ state: `not-found-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
+  report.push({ state: `diag-not-found-${tag}`, rows: [], diag: await page.evaluate(() => {
+    const r = document.querySelector('[data-fp-host]').shadowRoot;
+    const clipped = [...r.querySelectorAll('.missing-note button, .missing-title, .sb-missing button, .sb-missing > span, .sb-row .missing-tag')]
+      .filter((el) => el.getClientRects().length && el.scrollWidth > el.clientWidth + 1)
+      .map((el) => `${el.className}:${(el.textContent || '').trim().slice(0, 18)}`);
+    return { clipped, noteShown: Boolean(r.querySelector('.popover .missing-note')) };
+  }) });
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   await openList(page);
   await click(page, sr(page, '.sb-row').first()); await page.waitForTimeout(600);
@@ -268,6 +289,8 @@ for (const r of report) for (const row of r.rows) if (!row.ok) fails.push({ stat
 const diags = report.filter((r) => r.diag).map((r) => ({ state: r.state, ...r.diag }));
 const clipped = diags.flatMap((d) => d.clipped.map((c) => `${d.state}: ${c}`));
 const drifted = diags.filter((d) => d.controls).map((d) => `${d.state}: ${d.controls}`);
+const unseen = diags.filter((d) => d.noteShown === false).map((d) => d.state);
+if (unseen.length) console.log('not-found note never reached the screen in:', unseen.join(', '));
 console.log(JSON.stringify({ sampled: report.reduce((n, r) => n + r.rows.length, 0), fails, clipped, drifted, diags }, null, 1));
 // A measurement that cannot fail is decoration.
-if (fails.length || clipped.length || drifted.length) process.exit(1);
+if (fails.length || clipped.length || drifted.length || unseen.length) process.exit(1);

@@ -77,6 +77,16 @@ export function sanitizeTrail(raw) {
   return JSON.stringify(out).length > 6000 ? [] : out;
 }
 
+// "Screen not found": someone's Go to comment could not reach the thread's
+// screen in this build of the prototype. A note scoped to that build (`proto`),
+// not a verdict — the screen may only have been renamed, or the way to it may
+// not be known yet — so it never becomes a status or a line in the history,
+// and the first person who lands on the screen clears it.
+export function sanitizeMissing(raw) {
+  if (!raw || typeof raw !== 'object' || !Number.isFinite(raw.at)) return null;
+  return { proto: clean(raw.proto, 80) || null, at: raw.at };
+}
+
 /* The prototype's own light/dark state when a comment was left. A screen is
    not one picture: the same heading over a dark theme is a different thing to
    look at, and a comment about it lands on the wrong version otherwise. We
@@ -195,6 +205,7 @@ export function assemble(events, root = '') {
       // `resolved` is derived from the status (v1 read it off the event wrapper
       // and lost it on every rebuild). State events carry one concern each
       // (status | kind | preview), so they are filtered by field, not by type.
+      missing: sanitizeMissing(states.filter((e) => 'missing' in e.data).at(-1)?.data.missing),
       status,
       statusNote: status === 'wont' ? history.at(-1).note : null,
       kind,
@@ -268,6 +279,19 @@ export const applyDelete = (threads, tid) => threads.filter((t) => t.id !== tid)
 // never re-taught.
 export const applyTrail = (threads, tid, trail) =>
   threads.map((t) => (t.id === tid ? { ...t, trail: sanitizeTrail(trail) } : t));
+
+// The whole rule of the `missing` action, so the three servers cannot drift:
+// the mark to store (null clears it), or undefined when the request changes
+// nothing — the same build reported twice is one fact, not two writes.
+export function missingPatch(thread, body, now) {
+  const next = body?.missing ? { proto: clean(body.proto, 80) || null, at: now } : null;
+  const cur = thread?.missing || null;
+  if (!next) return cur ? null : undefined;
+  return cur && cur.proto === next.proto ? undefined : next;
+}
+
+export const applyMissing = (threads, tid, missing) =>
+  threads.map((t) => (t.id === tid ? { ...t, missing: sanitizeMissing(missing) } : t));
 
 export const applyPreview = (threads, tid, preview) =>
   threads.map((t) => (t.id === tid ? { ...t, preview } : t));

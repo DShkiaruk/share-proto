@@ -127,6 +127,47 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.6 — 2026-09-30
+
+Reported from a live review: after a screen was deleted from the prototype,
+opening one of its comments sent the prototype through every screen on its own,
+reloading forever, and the comment could be neither closed nor deleted.
+
+### Go to comment always ends
+- **One reload per walk.** The reload-teleport now continues the same walk: it
+  carries the edges that already failed across the reload and never reloads a
+  second time. Before, it started over with a clean slate, met the same dead
+  ends and reloaded again — without end.
+- **Esc stops a walk** ("· Esc to stop" on the toast) and opens the comment where
+  it can be read, closed or deleted. Stopping marks nothing.
+
+### Screen not found
+- When every way the graph knew to a comment's screen fails, the comment opens in
+  place with a note: *“X” didn’t come up in this version of the prototype. It may
+  have been removed or renamed.* — **Close — screen removed** (a designer closes
+  it as Won’t do, reason “Screen removed”; a client marks it Done) and **Try
+  again**. Its row in the list says **Screen not found**, and clicking it no
+  longer walks anywhere.
+- A comment on a page removed from the build (a 404) opens the same way instead
+  of sending the reader to a page with no overlay on it.
+- Designers get one line above the list — *N comments point to screens this
+  version doesn’t have* — with **Close all** (two clicks: the first only asks).
+- The note belongs to a build: it covers every open comment on the same screen,
+  stops counting once a new build is deployed, and is cleared by the first person
+  who lands on the screen. Nothing is deleted automatically — the note is
+  inference (a renamed heading looks exactly like a deleted screen), and a screen
+  the graph has never heard of is still “navigate there by hand”, not “not found”.
+
+### Servers
+- New action `missing`; the whole rule is `missingPatch` in `template/lib/threads.js`,
+  used by the Vercel functions, `server.js` and the Worker room (the parity test
+  requires it). Both smoke scripts check it. An older server simply keeps the
+  note in the tab that saw it.
+
+### Also
+- The map’s “N open” chip fell to 4.2:1 on a card with no picture yet — the card a
+  deleted screen always has. It clears AA now; the visual gate seeds that case.
+
 ## v2.5 — 2026-09-16
 
 Everything a designer found this week, turned into something that fails before

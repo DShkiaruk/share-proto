@@ -15,6 +15,7 @@ this tool, the last column is the part to keep working.
 | A deployed Worker could not be checked | **A recommended shape with no verification path.** `worker-smoke.sh` only ever booted localhost. | `scripts/smoke.sh … --room <name>` runs the same contract against a deployed host, bearer tokens and all |
 | A client could read another client's room | **Authority read from the request instead of the session.** | Room-scoped tokens, `ROOM_PASSWORDS`, and the room checks in `tests/unit/room.test.mjs` |
 | The preflight said "ready" while signed out | **A check that matched the wrong evidence.** `wrangler whoami` prints the word "account" either way. | It looks for the address; `bash -n` over every script is in the unit suite |
+| A comment on a deleted screen sent the prototype through every screen, reloading forever, and could be neither closed nor deleted | **A retry that forgot what it had tried, in front of the only door.** The reload-teleport restarted the walk with an empty list of failed edges, so it met the same dead ends and reloaded again; the map's walk had a once-per-session guard, the comment's did not. And a comment's status and delete lived in a card that only opened at the end of a walk that had to succeed. | `tests/e2e/removed.spec.mjs`, on a prototype the day after a screen was deleted: at most one reload, then the card opens as "Screen not found" with Close and Try again; Esc stops any walk; the mark is shared per build (`missing`, all three servers, both smoke scripts) and landing on the screen clears it. Disabling both loop guards makes the first case fail |
 
 ## The rule these add up to
 
@@ -26,6 +27,10 @@ suite only ever ran same-origin.
 The second rule: **a script that summarises must not be able to summarise a
 failure as a success.** `crawl.mjs` printed `shots: 0` next to `screens: 30` and
 exited 0. If a number can be zero for a bad reason, say so and exit non-zero.
+
+The third: **a walk the overlay drives must end somewhere the reader can act.**
+Arriving, being asked to go by hand, or being told the screen did not come up —
+never a loop, and never a place where the comment cannot be closed.
 
 ## Before handing a link to anyone
 

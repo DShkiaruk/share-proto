@@ -23,6 +23,13 @@ const projects = [
     use: { baseURL: 'http://localhost:4175', viewport: { width: 1280, height: 800 } },
     dependencies: ['local-budget'],
   },
+  // A prototype after one of its screens was deleted. Its own server and store:
+  // the graph it seeds must not leak into the walks of the specs above.
+  {
+    name: 'local-removed',
+    testMatch: /removed\.spec\.mjs/,
+    use: { baseURL: 'http://localhost:4176', viewport: { width: 1280, height: 800 } },
+  },
 ];
 if (process.env.LAB_URL) {
   projects.push({
@@ -62,6 +69,13 @@ export default defineConfig({
       // A gated page whose comments are hosted apart — shape B in the runbook.
       command: 'bash tests/fixtures/serve-bridge.sh',
       url: 'http://localhost:4175/login.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+      cwd: new URL('../..', import.meta.url).pathname,
+    },
+    {
+      command: 'bash tests/fixtures/serve-removed.sh',
+      url: 'http://localhost:4176/login.html',
       reuseExistingServer: false,
       timeout: 30_000,
       cwd: new URL('../..', import.meta.url).pathname,

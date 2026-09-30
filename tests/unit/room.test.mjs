@@ -327,6 +327,30 @@ test('a thread learns the way back once, and only once', async () => {
   assert.equal((await r.post('designer', 'Dee', { action: 'trail', threadId: t.id, trail: [] })).status, 400);
 });
 
+test('a thread can be marked "screen not found" for one build, and cleared', async () => {
+  const r = room();
+  const t = (await create(r, 'client', 'Cliff', { screenLabel: 'Change flight' })).payload.thread;
+  assert.equal(t.missing ?? null, null);
+  // Whoever could not reach the screen says so — a client walks there too.
+  const marked = await r.post('client', 'Cliff', { action: 'missing', threadId: t.id, missing: true, proto: 'v7' });
+  assert.equal(marked.status, 200);
+  assert.equal(marked.payload.thread.missing.proto, 'v7');
+  assert.equal(r.s.map.get(`t:${t.id}`).missing.proto, 'v7');
+  // A note, not a verdict: the comment stays open and its history is untouched.
+  assert.equal(marked.payload.thread.status, 'open');
+  assert.deepEqual(marked.payload.thread.history, []);
+  const cleared = await r.post('designer', 'Dee', { action: 'missing', threadId: t.id, missing: false });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.payload.thread.missing, null);
+  assert.equal(r.s.map.get(`t:${t.id}`).missing, null);
+});
+
+test('a client cannot mark a thread it cannot see', async () => {
+  const r = room();
+  const t = (await create(r, 'designer', 'Dee')).payload.thread;
+  assert.equal((await r.post('client', 'Cliff', { action: 'missing', threadId: t.id, missing: true, proto: 'v7' })).status, 404);
+});
+
 // Moving a room here from a Vercel deployment is the reason this action exists,
 // and the thing that would make the move worthless is arriving with everyone's
 // comments re-authored by whoever ran it.
