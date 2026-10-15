@@ -28,4 +28,20 @@ This follows the documented recipe: [cdn-cache/purge](https://vercel.com/docs/ca
   - limits on how often you can purge;
   - CDN requests count against Hobby's 1,000,000 a month.
 
-**Not built.** This is a design check, not an implementation.
+**Built in v2.9.0** (`template/lib/changes.js`, `template/api/version.js`; see
+`docs/superpowers/specs/2026-10-16-version-check.md`).
+
+## On the lab, after deploying v2.9.0 (2026-10-16)
+
+`node live-lab.mjs` with two browsers on the real network. A designer is at
+the page and a client posts. Raw rows are in `live-lab.jsonl`.
+
+- **A quiet minute:** 9 asks — 1 `REVALIDATED`, then 8 `HIT` — and **0 full
+  reads**. Before, each of those polls was a full read.
+- **One click:** after a client's comment was saved, the designer clicked
+  once 2 s later. The comment showed **0.29–0.49 s after the click** (3 runs).
+  Before v2.9.0 it showed only at the next poll: up to 25 s, or 4 min once
+  the tab had gone quiet.
+- **No click at all:** the steady 15 s ask found it in 14.5–14.7 s (2 runs).
+- `scripts/smoke.sh` on the lab: a repeated ask is `HIT HIT HIT`, and a write
+  moves the version within 6 s.

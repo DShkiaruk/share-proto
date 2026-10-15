@@ -1,0 +1,8 @@
+{"at":"2026-10-15T21:35:56.661Z","test":"mode","changes":"/api/version"}
+{"at":"2026-10-15T21:37:01.478Z","test":"quiet minute","asks":9,"cache":"REVALIDATED HIT HIT HIT HIT HIT HIT HIT HIT","fullReads":0}
+{"at":"2026-10-15T21:37:07.761Z","test":"one click","rep":1,"savedMs":479,"seenAfterClickMs":294}
+{"at":"2026-10-15T21:37:14.177Z","test":"one click","rep":2,"savedMs":427,"seenAfterClickMs":486}
+{"at":"2026-10-15T21:37:20.638Z","test":"one click","rep":3,"savedMs":473,"seenAfterClickMs":483}
+{"at":"2026-10-15T21:37:36.364Z","test":"no click","rep":1,"seenMs":14723}
+{"at":"2026-10-15T21:37:51.863Z","test":"no click","rep":2,"seenMs":14495}
+{"at":"2026-10-15T21:37:55.549Z","test":"cleanup","deleted":5,"leftOver":0}
