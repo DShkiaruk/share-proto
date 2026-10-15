@@ -139,9 +139,9 @@ check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments")" 401 "nor th
 check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments?room=pr-7")" 200 "and still opens its own"
 
 # A room can be moved in: verbatim, designer-only, and idempotent.
-IMP='{"action":"import","threads":[{"id":"66666666-6666-4666-8666-666666666666","createdAt":1000,"authorRole":"client","author":"Olena","screen":"Home","screenLabel":"Home","n":9001,"messages":[{"author":"Olena","role":"client","text":"moved in","at":1000}]}]}'
+IMP='{"action":"import","threads":[{"id":"66666666-6666-4666-8666-666666666666","createdAt":1000,"authorRole":"client","author":"Olena","screen":"Home","screenLabel":"Home","n":1,"messages":[{"author":"Olena","role":"client","text":"moved in","at":1000}]}]}'
 check "$(api "$TEAM_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"
-check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="66666666-6666-4666-8666-666666666666"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 9001 1000" "with its author, number and time"
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 't=[x for x in d["threads"] if x["id"]=="66666666-6666-4666-8666-666666666666"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 1 1000" "with its author, number and time"
 check "$(api "$TEAM_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("skipped"))')" "1" "and a second run adds nothing"
 check "$(api "$CLIENT_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("error"))')" "Not allowed" "a client cannot move a room in"
 

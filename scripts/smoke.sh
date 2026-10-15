@@ -127,9 +127,12 @@ check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: applic
 curl -s -o /dev/null -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"'"$LEARN"'"}' "$API"
 
 # A room can be moved in: verbatim, designer-only, and idempotent.
-IMP='{"action":"import","threads":[{"id":"55555555-5555-4555-8555-555555555555","createdAt":1000,"authorRole":"client","author":"Olena","screen":"smoke","screenLabel":"smoke","n":9001,"messages":[{"author":"Olena","role":"client","text":"smoke: moved in","at":1000}]}]}'
+# Number 1, not a high one: the counter keeps the highest number it has seen,
+# deletions included, so a test thread numbered 9001 left every real comment
+# on a smoke-tested deployment numbered 9002 and up.
+IMP='{"action":"import","threads":[{"id":"55555555-5555-4555-8555-555555555555","createdAt":1000,"authorRole":"client","author":"Olena","screen":"smoke","screenLabel":"smoke","n":1,"messages":[{"author":"Olena","role":"client","text":"smoke: moved in","at":1000}]}]}'
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$IMP" "$API" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"
-check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | jq_ 't=[x for x in d["threads"] if x["id"]=="55555555-5555-4555-8555-555555555555"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 9001 1000" "with its author, number and time"
+check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | jq_ 't=[x for x in d["threads"] if x["id"]=="55555555-5555-4555-8555-555555555555"]; print(t[0]["author"], t[0]["n"], t[0]["createdAt"]) if t else print("missing")')" "Olena 1 1000" "with its author, number and time"
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d "$IMP" "$API" | jq_ 'print(d.get("skipped"))')" "1" "and a second run adds nothing"
 check "$(curl -s -b "$TMP/client.jar" -K "$TMP/client.conf" -H 'Content-Type: application/json' -d "$IMP" "$API" | jq_ 'print(d.get("error"))')" "Not allowed" "a client cannot move a room in"
 curl -s -o /dev/null -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' -d '{"action":"delete","threadId":"55555555-5555-4555-8555-555555555555"}' "$API"
