@@ -128,3 +128,18 @@ test('the API refuses a browser on an origin that is not allow-listed', async ({
   );
   expect(blocked).toBe('blocked');
 });
+
+// H hid everything, and the next poll put the toolbar back on its own: the
+// poll re-showed it to take down a finished sign-in, without asking why it
+// was hidden. Reported as "I hide it, and it shows up again".
+test('hiding with H holds when the next poll lands', async ({ page }) => {
+  await signIn(page);
+  await page.mouse.click(600, 600);
+  await page.keyboard.press('h');
+  await expect(inOverlay(page, '.toolbar')).toBeHidden();
+  await page.evaluate(() => window.__fp.refresh()); // what the poll does
+  await expect(inOverlay(page, '.toolbar')).toBeHidden();
+  await expect(inOverlay(page, '.present-dot')).toBeVisible();
+  await page.keyboard.press('h');
+  await expect(inOverlay(page, '.toolbar')).toBeVisible();
+});

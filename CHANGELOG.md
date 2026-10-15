@@ -127,6 +127,69 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.7 — 2026-10-15
+
+Reported from live reviews: a client — "it freezes all the time and takes a
+long time to update"; a designer — "I hide it, and it shows up again anyway",
+and "on a phone it's unclear how to leave, hide and so on". Each item below is
+now a check in `tests/e2e/review.spec.mjs` (its own heavy fixture,
+`tests/fixtures/heavy.html`, on :4177), written to fail before its fix.
+
+### No freeze after a comment
+- **The comment picture copies only what is in view.** It used to copy the
+  whole document — every offscreen row — in one go: on a 600-row page that was
+  2.7 s with the page not answering, after every comment. A container wholly
+  out of view now keeps its box and loses its contents; media below the view
+  is dropped. Same pixels as a full copy on four prototypes (two heavy, two
+  light); the heavy ones went from 2.7 s to 0.4 s and from 31 s to 0.5 s.
+- **No more waiting for lazy pictures.** Before copying, the capture library
+  waits for every picture on the page, and lazy ones below the view never
+  load: a report full of screenshots used its whole 4 s budget there and never
+  got its preview, while still paying for the copy. The wait is now 300 ms;
+  fetching the pictures that are in view keeps the full 4 s.
+
+### Updates show up sooner
+- **A posted comment, reply, status or reaction shows at once** — from the
+  server's answer, which already carries the saved thread — instead of after a
+  second full read of the room. A read that set out before the write is
+  discarded and repeated, so it cannot take the new comment away again.
+- **Coming back pulls the next check in.** A quiet tab backs off to one read
+  per 4 minutes (the free storage tier counts every read); a click or a key
+  used to change the pace but not the read already scheduled, so a returning
+  reviewer could wait the full 4 minutes. Now: activity brings the next read
+  within 25 s, returning to the window or opening the list reads at once — at
+  most one extra read per 10 s.
+
+### Hidden stays hidden
+- **The eye's choice is only the eye's.** Entering comment mode, or opening a
+  comment from the list, used to save "pins shown" over it — so pins hidden
+  once came back after the next comment and stayed back after a reload. Pins
+  now show for as long as you are commenting and hide again when you are done.
+- **H holds in embed mode.** Every poll re-showed the toolbar (to clear a
+  finished sign-in), so a toolbar hidden with H came back within a minute.
+
+### Pins that were never drawn
+- **A comment on the bare page** — below or beside the content, where the
+  click lands on `<html>` or `<body>` — was saved with a selector no browser
+  accepts, and its pin never appeared. New comments get `html` / `body`;
+  comments already saved that way are read correctly.
+
+### Phones
+- **The overlay follows the part of the page you can see.** A prototype built
+  for a desktop is wider than a phone; Chrome on Android then lays the page out
+  at full width and shows a window onto it, and the toolbar — fixed to the
+  page — was off the screen entirely (measured: a 760 px page on a 390 px
+  phone). Toolbar, list, cards, toasts and the map now live in a layer that
+  tracks the visual viewport and keeps its size at any zoom; pins stay with the
+  page.
+- **The toolbar fits.** Icons only below 480 px (it was 448 px wide on a
+  390 px screen and lost the drag handle and avatar off the edges); 44 px
+  touch targets.
+- **Hide everything with a tap.** A new toolbar button does what H does — a
+  phone has no H, and the toolbar covers exactly where phone prototypes keep
+  their tab bar. On touch, the way back is a 44 px button in the corner instead
+  of a faint 6 px dot.
+
 ## v2.6 — 2026-09-30
 
 Reported from a live review: after a screen was deleted from the prototype,

@@ -30,6 +30,14 @@ const projects = [
     testMatch: /removed\.spec\.mjs/,
     use: { baseURL: 'http://localhost:4176', viewport: { width: 1280, height: 800 } },
   },
+  // What reviewers hit on live links: freezes, slow updates, hiding, phones.
+  // A heavy prototype on its own server and store, so its timings and its
+  // comments touch nothing above.
+  {
+    name: 'local-review',
+    testMatch: /review\.spec\.mjs/,
+    use: { baseURL: 'http://localhost:4177', viewport: { width: 1280, height: 800 } },
+  },
 ];
 if (process.env.LAB_URL) {
   projects.push({
@@ -69,6 +77,13 @@ export default defineConfig({
       // A gated page whose comments are hosted apart — shape B in the runbook.
       command: 'bash tests/fixtures/serve-bridge.sh',
       url: 'http://localhost:4175/login.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+      cwd: new URL('../..', import.meta.url).pathname,
+    },
+    {
+      command: 'bash tests/fixtures/serve-heavy.sh',
+      url: 'http://localhost:4177/login.html',
       reuseExistingServer: false,
       timeout: 30_000,
       cwd: new URL('../..', import.meta.url).pathname,

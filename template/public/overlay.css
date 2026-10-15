@@ -108,6 +108,23 @@
   cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M14 3a10 10 0 0 1 10 10 10 10 0 0 1-10 10H5.5A2.5 2.5 0 0 1 3 20.5V13A10 10 0 0 1 14 3z" fill="%23171717" stroke="white" stroke-width="1.5"/><path d="M14 9.5v7M10.5 13h7" stroke="white" stroke-width="1.8" stroke-linecap="round"/></svg>') 4 24, crosshair;
 }
 
+/* ---- the visible part of the page ----
+   Every surface that is not a pin lives here. overlay.js sizes and moves this
+   box onto the visual viewport (fitChrome); its transform also makes it the
+   frame the fixed surfaces inside it are placed against. Above the pins and
+   the comment-mode click layer, as the surfaces always were. */
+.chrome {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform: translate(0, 0);
+  transform-origin: 0 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
 /* ---- pins ---- */
 
 .pins {
@@ -938,6 +955,10 @@
     font-size: 13px;
     transform: translate(-5px, -34px);
   }
+  .tb-icon {
+    width: 44px;
+    height: 44px;
+  }
   .icon-btn {
     width: 34px;
     height: 34px;
@@ -977,12 +998,29 @@
   }
 }
 
-@media (max-width: 379px) {
+/* A phone: icons only, so every control fits — with the labels the bar was
+   448 px wide on a 390 px screen and lost both ends, the drag handle with
+   them. Each control keeps its name as aria-label and title. */
+@media (max-width: 480px) {
   .tb-btn .tb-label {
     display: none;
   }
   .tb-btn {
     padding: 0 12px;
+  }
+  .toolbar {
+    max-width: calc(100% - 16px);
+  }
+}
+@media (max-width: 359px) {
+  .tb-btn {
+    padding: 0 10px;
+  }
+  .tb-icon {
+    width: 40px;
+  }
+  .tb-divider {
+    margin: 0 1px;
   }
 }
 
@@ -1217,6 +1255,32 @@
 }
 .present-dot:hover {
   opacity: 0.9;
+}
+.present-dot svg {
+  display: none;
+}
+/* A finger cannot find a faint 6 px dot: on touch the way back is a button. */
+@media (pointer: coarse) {
+  .present-dot {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+    display: grid;
+    place-items: center;
+    background: var(--surface);
+    background-clip: border-box;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    color: var(--ink);
+    opacity: 0.92;
+  }
+  .present-dot svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+  }
 }
 
 /* ---------- media: attachments, lightbox, preview card ---------- */

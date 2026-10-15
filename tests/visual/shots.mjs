@@ -143,7 +143,10 @@ const CONTRAST_JS = `(() => {
     '.missing-again', '.sb-missing > span', '.sb-missing button'];
   // Glyphs that carry meaning on their own are graphics, not text: WCAG 1.4.11
   // asks 3:1 of them, and nothing of a shape that only decorates a label.
-  const graphics = ['.st-ico', '.kind-ico', '.row-dot', '.missing-title svg', '.missing-tag svg', '.sb-missing svg'];
+  const graphics = ['.st-ico', '.kind-ico', '.row-dot', '.missing-title svg', '.missing-tag svg', '.sb-missing svg',
+    // icon-only controls: on a phone the toolbar is nothing but these, and
+    // the way back from "hide everything" is one of them
+    '.tb-icon svg', '.tb-btn svg', '.present-dot svg'];
   const out = [];
   const seen = new Set();
   for (const sel of graphics) for (const el of r.querySelectorAll(sel)) {
@@ -187,6 +190,7 @@ async function shootAll(theme, device) {
   await login(page, 'Dmytro', 'team-e2e');
   const shot = (name) => page.screenshot({ path: `${OUT}${name}-${tag}.png` });
   await shot('01-toolbar');
+  report.push({ state: `toolbar-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
   await openList(page); await page.waitForTimeout(200);
   await shot('02-sidebar');
   report.push({ state: `sidebar-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
@@ -276,6 +280,7 @@ async function shootAll(theme, device) {
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   await page.keyboard.press('KeyH'); await page.waitForTimeout(300);
   await shot('09-presentation');
+  report.push({ state: `presentation-${tag}`, rows: await page.evaluate(CONTRAST_JS) });
   await ctx.close();
 }
 await shootAll('light', null);

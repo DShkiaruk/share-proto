@@ -97,6 +97,8 @@
       '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>'
     ),
     chevron: svg('<path d="m6 9 6 6 6-6"/>'),
+    // Lucide "panel-bottom-close": put the whole overlay away.
+    hideAll: svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/><path d="m15 8-3 3-3-3"/>'),
     screenOff: svg('<path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m3 3 18 18"/>'),
     moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
     sun: svg(
@@ -313,12 +315,53 @@
   const clickLayer = el('div', 'click-layer');
   clickLayer.hidden = true;
   const pinsLayer = el('div', 'pins');
+  // Every surface that is not a pin: toolbar, list, cards, toasts, the map.
+  // It follows the part of the page the reader can see (fitChrome).
+  const chrome = el('div', 'chrome');
   const toolbar = el('div', 'toolbar');
   const sidebar = el('aside', 'sidebar');
   let popover = null;
 
-  root.append(clickLayer, pinsLayer, toolbar, sidebar);
+  root.append(clickLayer, pinsLayer, chrome);
+  chrome.append(toolbar, sidebar);
   document.body.appendChild(host);
+
+  /* On a phone, a prototype built for a desktop is wider than the screen. The
+     browser lays the page out at its full width and shows a window onto it —
+     Chrome on Android: a 760 px page behind a 390 px screen — and whatever is
+     fixed to the page sits where the page puts it. Measured: the toolbar,
+     fixed to the page's bottom centre, was entirely off the screen, and on an
+     iPhone it overhung both edges. The overlay's surfaces follow that window
+     (the visual viewport) instead, and keep the size a finger needs at any
+     zoom. Pins stay with the page, where the things they point at are. */
+  function view() {
+    const vv = window.visualViewport;
+    if (!vv) return { x: 0, y: 0, s: 1, w: document.documentElement.clientWidth || innerWidth, h: innerHeight };
+    const s = vv.scale || 1;
+    return { x: vv.offsetLeft, y: vv.offsetTop, s, w: vv.width * s, h: vv.height * s };
+  }
+  // A point on the page (client coordinates) → the same spot inside `chrome`.
+  function toChrome(x, y) {
+    const v = view();
+    return { x: (x - v.x) * v.s, y: (y - v.y) * v.s };
+  }
+  let fitQueued = false;
+  function fitChrome() {
+    fitQueued = false;
+    const v = view();
+    chrome.style.width = `${v.w}px`;
+    chrome.style.height = `${v.h}px`;
+    chrome.style.transform = `translate(${v.x}px, ${v.y}px) scale(${1 / v.s})`;
+  }
+  const queueFit = () => {
+    if (fitQueued) return;
+    fitQueued = true;
+    requestAnimationFrame(fitChrome);
+  };
+  fitChrome();
+  window.visualViewport?.addEventListener('resize', queueFit);
+  window.visualViewport?.addEventListener('scroll', queueFit);
+  window.addEventListener('resize', queueFit);
 
   // Interacting with the overlay must not count as an "outside click" for the
   // prototype's own menus and popovers — they would close before a comment
@@ -476,6 +519,11 @@
   /* ---------- anchors ---------- */
 
   function buildPath(target) {
+    // The page itself: a click on bare background lands on <html> or <body>.
+    // Both used to come out as selectors no browser accepts ("body > " and
+    // "body > html:nth-of-type(1)"), and such a comment's pin was never drawn.
+    if (target === document.documentElement) return 'html';
+    if (target === document.body) return 'body';
     const segs = [];
     let n = target;
     let depth = 0;
@@ -584,12 +632,15 @@
   // A pin is visible wherever its anchored element actually exists and is
   // rendered — the prototype mounts/unmounts screens, so this is the screen
   // check. pos is null when the anchor isn't on the current screen.
+  // What earlier builds saved for a click on the bare page (see buildPath).
+  const LEGACY_PAGE_PATHS = { 'body >': 'body', 'body > html:nth-of-type(1)': 'html' };
+
   function locateAnchor(anchor) {
     if (!anchor) return { el: null, pos: null };
     if (anchor.path) {
       let target = null;
       try {
-        target = document.querySelector(anchor.path);
+        target = document.querySelector(LEGACY_PAGE_PATHS[anchor.path.trim()] || anchor.path);
       } catch {
         target = null;
       }
@@ -722,7 +773,12 @@
       throw new Error('unauthenticated');
     }
     if (!r.ok) throw new Error(`api ${r.status}`);
-    return r.json();
+    const data = await r.json();
+    // Only writes to threads make a read in flight stale in a way anyone sees;
+    // counting the bookkeeping ones (version, screen shots, map edges) would
+    // only buy extra reads, and every read is counted on a free tier.
+    if (method !== 'GET' && (data?.thread || body?.action === 'delete')) writeSeq++;
+    return data;
   }
 
   /* The page's own gate, asked for a comments session on the reader's behalf.
@@ -783,7 +839,7 @@
       } catch {}
       showLogin();
     });
-    root.appendChild(loginPill);
+    chrome.appendChild(loginPill);
   }
 
   // The card, taken down without recording a dismissal: the reader did not
@@ -892,7 +948,7 @@
     actions.append(notNow, btn);
     card.append(nameIn, passIn, err, actions);
     loginCard.appendChild(card);
-    root.appendChild(loginCard);
+    chrome.appendChild(loginCard);
     (nameIn.value ? passIn : nameIn).focus();
   }
 
@@ -965,6 +1021,44 @@
     }, 1800); // let the screen settle before painting it
   }
 
+  /* What the picture shows is the viewport, so that is all it copies. Copying
+     the whole document is what froze a long page after every comment: 2.7 s
+     with nothing answering, for 7 000 nodes of rows nobody could see. A
+     container wholly out of view keeps its box — its size travels with its
+     copied styles, so nothing in view moves — and loses its contents, unless
+     one of them is pinned to the screen and escapes it. Media below or right
+     of the view is dropped outright: it cannot move anything above it, and a
+     lazy picture there never loads, so it would only be waited for. Measured
+     against a full copy on four prototypes: the same pixels on all four; the
+     two heavy ones went from 2.7 s to 0.4 s and from 31 s to 0.5 s, the two
+     light ones stayed at a few hundred milliseconds. */
+  const MEDIA_TAGS = /^(img|picture|video|iframe|canvas|svg)$/i;
+  function viewportOnly() {
+    const vw = innerWidth;
+    const vh = innerHeight;
+    const outside = new WeakMap();
+    const isOutside = (n) => {
+      if (outside.has(n)) return outside.get(n);
+      const r = n.getBoundingClientRect();
+      // No size at all (display: contents, an empty wrapper) says nothing
+      // about where its children are.
+      const out = r.width || r.height ? r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw : false;
+      outside.set(n, out);
+      return out;
+    };
+    return (n) => {
+      if (n === host) return false;
+      const p = n.parentElement;
+      if (!p || p === document.documentElement || p === document.body) return true;
+      if (isOutside(p)) return n.nodeType === 1 && /fixed|sticky/.test(getComputedStyle(n).position);
+      if (n.nodeType === 1 && MEDIA_TAGS.test(n.tagName)) {
+        const r = n.getBoundingClientRect();
+        if (r.top > vh || r.left > vw) return false;
+      }
+      return true;
+    };
+  }
+
   // Rasterize the current viewport to a JPEG data URL. Shared by the comment
   // preview and the map's automatic screen shots.
   async function snapViewport(point) {
@@ -972,15 +1066,25 @@
       const lib = await loadScreenshotLib();
       if (!lib) return null;
       const scale = Math.min(1, 960 / innerWidth);
+      // Before copying, the library waits for every picture on the page to
+      // load. The ones in view loaded long ago; the ones still loading are lazy
+      // ones below it, which never will — a report full of screenshots spent
+      // the whole budget here and never got its picture. So the wait is short,
+      // and fetching the pictures that are in view gets the full budget back.
+      const job = await lib.createContext(document.documentElement, {
+        scale,
+        width: innerWidth,
+        height: innerHeight,
+        timeout: 300,
+        filter: viewportOnly(),
+        style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
+      });
+      job.timeout = 4000;
+      // A capture that loses the race still finishes; only then is its
+      // context (a sandbox frame) safe to take down.
+      const work = lib.domToCanvas(job).finally(() => lib.destroyContext(job));
       const full = await Promise.race([
-        lib.domToCanvas(document.documentElement, {
-          scale,
-          width: innerWidth,
-          height: innerHeight,
-          timeout: 4000,
-          filter: (node) => node !== host,
-          style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
-        }),
+        work,
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
       ]);
       const c = document.createElement('canvas');
@@ -1059,19 +1163,35 @@
     im.alt = '';
     lightbox.appendChild(im);
     lightbox.addEventListener('click', closeLightbox);
-    root.appendChild(lightbox);
+    chrome.appendChild(lightbox);
   }
 
   let inflight = null;
+  // Writes completed so far. A read that set out before the latest of them
+  // came back with a room that predates it — applying that would take a
+  // comment just shown away again, until the next poll.
+  let writeSeq = 0;
+  const STALE = Symbol('stale');
+  let lastReadAt = 0;
+  // A read on demand, when the reader is plainly looking — but never more than
+  // one per 10 s: on a free storage tier every read is counted.
+  const FRESH_MS = 10000;
+  function readIfStale() {
+    if (Date.now() - lastReadAt > FRESH_MS) refresh();
+  }
   let lastSig = '';
   let pollEvery = POLL_MS;
   let lastMapSig = { sig: '', map: '' };
   let legacyNoticeShown = false;
   function refresh() {
     if (!inflight) {
+      const seq = writeSeq;
       inflight = (async () => {
+        let stale = false;
         try {
           const data = await api('GET');
+          if (seq !== writeSeq) throw STALE;
+          lastReadAt = Date.now();
           state.role = data.role;
           // Signed in is signed in: take down anything that is still asking.
           // Another tab, a retried request or a restored session can all land
@@ -1079,7 +1199,9 @@
           if (EMBED && state.role) {
             hidePill();
             dismissedLoginCard();
-            toolbar.style.display = '';
+            // …but a toolbar hidden on purpose (H) stays hidden: this ran on
+            // every poll and put it back over the reader's choice.
+            if (!state.presenting) toolbar.style.display = '';
           }
           state.name = data.name || '';
           state.serverV = Number(data.v) || 1;
@@ -1096,14 +1218,7 @@
           healMissing();
           // Re-render only on real change: a wholesale sidebar rebuild under the
           // cursor would swallow the click the reviewer is about to make.
-          const sig = JSON.stringify([
-            state.threads.map((t) => [
-              t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.n, t.missing?.proto ?? (t.missing ? 1 : 0),
-              t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
-            ]),
-            state.versions.map((v) => [v.id, v.label]),
-            Object.keys(state.nav).sort(),
-          ]);
+          const sig = roomSig();
           // Screens and map metadata are the map's business only. Folding them
           // into the same signature meant a background screen capture repainted
           // the sidebar — under the cursor, losing whatever hover or click was
@@ -1137,14 +1252,42 @@
               openThread(t.id, p);
             }
           }
-        } catch {
+        } catch (e) {
           /* transient network errors: keep current state */
+          if (e === STALE) stale = true;
         } finally {
           inflight = null;
         }
+        if (stale) return refresh();
       })();
     }
     return inflight;
+  }
+
+  /* A write answers with the thread as saved. Showing that at once, rather
+     than after a full read of the room, is the difference between a comment
+     that appears when you press Enter and one that appears a second or more
+     later (two round trips on a serverless host, longer when it is cold). The
+     full read follows in the background for everything else. */
+  function upsertThread(t) {
+    if (!t?.id) return false;
+    const i = state.threads.findIndex((x) => x.id === t.id);
+    state.threads = i < 0 ? [...state.threads, t] : state.threads.map((x) => (x.id === t.id ? t : x));
+    // The read that follows will find exactly this — it must not paint it twice.
+    lastSig = roomSig();
+    renderAll();
+    return true;
+  }
+
+  function roomSig() {
+    return JSON.stringify([
+      state.threads.map((t) => [
+        t.id, lastAt(t), statusOf(t), t.kind, t.preview, t.n, t.missing?.proto ?? (t.missing ? 1 : 0),
+        t.messages.map((m) => [m.at, m.text.length, m.edited ? 1 : 0, m.reactions || 0, m.img?.length || 0]),
+      ]),
+      state.versions.map((v) => [v.id, v.label]),
+      Object.keys(state.nav).sort(),
+    ]);
   }
 
   /* ---------- toast ---------- */
@@ -1154,7 +1297,7 @@
     shadow.querySelectorAll('.toast:not(.sticky)').forEach((t) => t.remove());
     const t = el('div', 'toast', text);
     if (stickyEl) t.style.bottom = '124px'; // don't cover the sticky guide
-    root.appendChild(t);
+    chrome.appendChild(t);
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.remove(), ms);
   }
@@ -1165,7 +1308,7 @@
     clearSticky();
     stickyEl = el('div', 'toast sticky', text);
     stickyWalk = walk;
-    root.appendChild(stickyEl);
+    chrome.appendChild(stickyEl);
   }
   function clearSticky() {
     stickyEl?.remove();
@@ -1195,11 +1338,21 @@
   const btnEye = el('button', 'tb-icon');
   btnEye.addEventListener('click', () => setPinsHidden(!state.pinsHidden));
 
+  // Put the whole overlay away, this toolbar included. H does it from a
+  // keyboard; a phone has no H, and the toolbar sits exactly where phone
+  // prototypes keep their tab bar. Hiding the pins (the eye) and hiding the
+  // tool are two different wishes — the tools reviewers know keep them apart.
+  const btnHide = el('button', 'tb-icon tb-hide');
+  btnHide.append(icon('hideAll'));
+  btnHide.title = 'Hide comments and this toolbar (H)';
+  btnHide.setAttribute('aria-label', 'Hide comments and toolbar');
+  btnHide.addEventListener('click', () => togglePresent());
+
   const tbAvatar = el('span', 'tb-avatar');
   const grip = el('span', 'tb-grip');
   grip.append(icon('grip'));
   grip.title = 'Drag to move · double-click to reset · H hides comments · J/K next/previous';
-  toolbar.append(grip, btnMode, el('span', 'tb-divider'), btnThreads, btnMap, btnEye, tbAvatar);
+  toolbar.append(grip, btnMode, el('span', 'tb-divider'), btnThreads, btnMap, btnEye, btnHide, tbAvatar);
 
   /* ---------- draggable toolbar (dodge prototype's own bars) ---------- */
 
@@ -1219,9 +1372,9 @@
       toolbar.style.translate = '';
       return;
     }
-    const r = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.min(Math.max(pos.x, 8), Math.max(8, innerWidth - r.width - 8))}px`;
-    toolbar.style.top = `${Math.min(Math.max(pos.y, 8), Math.max(8, innerHeight - r.height - 8))}px`;
+    const v = view();
+    toolbar.style.left = `${Math.min(Math.max(pos.x, 8), Math.max(8, v.w - toolbar.offsetWidth - 8))}px`;
+    toolbar.style.top = `${Math.min(Math.max(pos.y, 8), Math.max(8, v.h - toolbar.offsetHeight - 8))}px`;
     toolbar.style.bottom = 'auto';
     toolbar.style.translate = 'none';
   }
@@ -1230,15 +1383,18 @@
   grip.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     const r = toolbar.getBoundingClientRect();
-    tbDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    const at = toChrome(e.clientX, e.clientY);
+    const box = toChrome(r.left, r.top);
+    tbDrag = { dx: at.x - box.x, dy: at.y - box.y };
     grip.setPointerCapture(e.pointerId);
     toolbar.classList.add('dragging');
   });
   grip.addEventListener('pointermove', (e) => {
     if (!tbDrag) return;
-    const r = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.min(Math.max(e.clientX - tbDrag.dx, 8), innerWidth - r.width - 8)}px`;
-    toolbar.style.top = `${Math.min(Math.max(e.clientY - tbDrag.dy, 8), innerHeight - r.height - 8)}px`;
+    const v = view();
+    const at = toChrome(e.clientX, e.clientY);
+    toolbar.style.left = `${Math.min(Math.max(at.x - tbDrag.dx, 8), v.w - toolbar.offsetWidth - 8)}px`;
+    toolbar.style.top = `${Math.min(Math.max(at.y - tbDrag.dy, 8), v.h - toolbar.offsetHeight - 8)}px`;
     toolbar.style.bottom = 'auto';
     toolbar.style.translate = 'none';
   });
@@ -1247,7 +1403,7 @@
     tbDrag = null;
     toolbar.classList.remove('dragging');
     const r = toolbar.getBoundingClientRect();
-    localStorage.setItem(TB_POS, JSON.stringify({ x: r.left, y: r.top }));
+    localStorage.setItem(TB_POS, JSON.stringify(toChrome(r.left, r.top)));
   };
   grip.addEventListener('pointerup', endTbDrag);
   grip.addEventListener('pointercancel', endTbDrag);
@@ -1257,13 +1413,26 @@
     toast('Toolbar back to its default spot');
   });
   window.addEventListener('resize', applyTbPos);
+  window.visualViewport?.addEventListener('resize', () => requestAnimationFrame(applyTbPos));
 
   function setPinsHidden(hidden) {
     state.pinsHidden = hidden;
     localStorage.setItem('fp_pins_hidden', hidden ? '1' : '0');
-    pinsLayer.style.display = hidden ? 'none' : '';
     if (hidden) closePopover();
+    syncPins();
     renderToolbar();
+  }
+
+  /* Whether the pins show: the reader's choice (the eye), lifted only for as
+     long as they are commenting — placing a pin, writing, reading a thread —
+     and given back the moment that is over. Only the eye writes the choice.
+     Entering comment mode used to save "shown" over it, so pins hidden once
+     came back with the next comment and stayed back after a reload — reported
+     as "I hide it, and it shows up again anyway". */
+  const commenting = () => state.mode || Boolean(state.draft) || Boolean(popover);
+  function syncPins() {
+    const show = !state.presenting && (!state.pinsHidden || commenting());
+    pinsLayer.style.display = show ? '' : 'none';
   }
 
   function renderToolbar() {
@@ -1424,6 +1593,7 @@
     state.active = null;
     state.confirmDelete = null;
     shadow.querySelectorAll('.pin.active').forEach((p) => p.classList.remove('active'));
+    syncPins();
   }
 
   let draftPin = null;
@@ -1437,14 +1607,13 @@
 
   let lastPopAnchor = null;
 
-  function placePopover(x, y) {
-    lastPopAnchor = { x, y };
-    // Visual viewport shrinks when the mobile keyboard opens; clamp to it so
-    // the composer never hides behind the keyboard.
-    // documentElement.clientWidth excludes the scrollbar — the same box the CSS
-    // `100vw` term does not, which used to let a right-edge popover overhang.
-    const vw = Math.min(document.documentElement.clientWidth || innerWidth, window.visualViewport ? window.visualViewport.width : innerWidth);
-    const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
+  function placePopover(px0, py0) {
+    lastPopAnchor = { x: px0, y: py0 };
+    // The card lives in `chrome`, which is the visible part of the page: the
+    // point it opens beside is translated into it. That box also shrinks when
+    // a phone's keyboard opens, so the composer never hides behind it.
+    const { x, y } = toChrome(px0, py0);
+    const { w: vw, h: vh } = view();
     // The list stays open on a wide screen, so the right edge it may use is
     // not the window's — a popover placed under the panel is a popover nobody
     // can read.
@@ -1462,7 +1631,7 @@
   }
 
   window.visualViewport?.addEventListener('resize', () => {
-    if (popover && lastPopAnchor) placePopover(lastPopAnchor.x, lastPopAnchor.y);
+    if (popover && lastPopAnchor) requestAnimationFrame(() => popover && placePopover(lastPopAnchor.x, lastPopAnchor.y));
   });
 
   function composeRow({ placeholder, onSubmit, bordered }) {
@@ -1604,10 +1773,12 @@
           draftPin?.remove();
           draftPin = null;
           state.filter = 'active'; // a fresh comment is always open — make its pin visible
-          await refresh();
+          const shown = upsertThread(thread);
+          if (!shown) await refresh(); // a server that does not answer with the thread
           closePopover();
           const pin = pinEls.get(thread.id);
           if (pin) openThread(thread.id, pin);
+          if (shown) refresh();
         } catch {
           toast('Couldn’t post — try again');
           send.disabled = false;
@@ -1627,7 +1798,7 @@
       chips.appendChild(b);
     }
     popover.append(chips, row);
-    root.appendChild(popover);
+    chrome.appendChild(popover);
     placePopover(state.draft.x, state.draft.y);
     ta.focus();
   }
@@ -1644,8 +1815,10 @@
   async function postThread(body, okToast) {
     try {
       const draft = popover?.querySelector('.compose textarea')?.value || '';
-      await api('POST', body);
-      await refresh();
+      const saved = await api('POST', body);
+      const shown = upsertThread(saved?.thread);
+      if (!shown) await refresh();
+      else refresh();
       const live = state.threads.find((x) => x.id === body.threadId);
       if (live) {
         openThread(live.id, pinEls.get(live.id));
@@ -1695,15 +1868,18 @@
       statusMenu.appendChild(kinds);
     }
     popover.appendChild(statusMenu);
-    const r = anchorBtn.getBoundingClientRect();
-    const pr = popover.getBoundingClientRect();
-    const vh = window.visualViewport ? window.visualViewport.height : innerHeight;
+    // Measured on the page, placed inside `chrome`: both into its units.
+    const br = anchorBtn.getBoundingClientRect();
+    const pr0 = popover.getBoundingClientRect();
+    const r = { ...toChrome(br.left, br.top), b: toChrome(br.right, br.bottom) };
+    const pr = toChrome(pr0.left, pr0.top);
+    const vh = view().h;
     // Open downwards unless that would push the last option off-screen.
-    const below = r.bottom + statusMenu.offsetHeight + 12 <= vh;
+    const below = r.b.y + statusMenu.offsetHeight + 12 <= vh;
     statusMenu.style.top = below
-      ? `${r.bottom - pr.top + 6}px`
-      : `${Math.max(4, r.top - pr.top - statusMenu.offsetHeight - 6)}px`;
-    statusMenu.style.left = `${Math.max(8, r.left - pr.left)}px`;
+      ? `${r.b.y - pr.y + 6}px`
+      : `${Math.max(4, r.y - pr.y - statusMenu.offsetHeight - 6)}px`;
+    statusMenu.style.left = `${Math.max(8, r.x - pr.x)}px`;
   }
   function askWontNote(t) {
     statusMenu.replaceChildren(el('div', 'menu-label', 'Why won’t this be done?'));
@@ -2031,9 +2207,11 @@
         if (!text) return;
         send.disabled = true;
         try {
-          await api('POST', { action: 'reply', threadId: t.id, text, images: images() });
-          await refresh();
+          const saved = await api('POST', { action: 'reply', threadId: t.id, text, images: images() });
+          const shown = upsertThread(saved?.thread);
+          if (!shown) await refresh();
           openThread(t.id, pinEls.get(t.id));
+          if (shown) refresh();
         } catch {
           toast('Couldn’t reply — try again');
           send.disabled = false;
@@ -2041,10 +2219,11 @@
       },
     });
     popover.appendChild(row);
-    root.appendChild(popover);
+    chrome.appendChild(popover);
 
     // A hidden pin measures 0×0 at the origin; using that dropped the card in
     // the top-left corner, over the sidebar, nowhere near the comment.
+    syncPins(); // a thread open shows its pin, hidden or not — measure after
     const pos = pinEl?.getClientRects().length ? pinEl.getBoundingClientRect() : null;
     if (pos) placePopover(pos.left, pos.top);
     else placePopover(innerWidth - 680, 80);
@@ -2319,7 +2498,6 @@
     const my = ++trip;
     walkFor = t.id;
     if (state.presenting) togglePresent();
-    if (state.pinsHidden) setPinsHidden(false);
     // Keep the list up where there is room for both: walking a review means
     // going back to it after every comment, and every tool that does this well
     // (Figma, Air, Framer) leaves the panel where it was.
@@ -2767,16 +2945,18 @@
     // that entering the card cancels.
     hoverCard.addEventListener('pointerenter', () => clearTimeout(hoverTimer));
     hoverCard.addEventListener('pointerleave', () => (hoverTimer = setTimeout(hidePreviewCard, 150)));
-    root.appendChild(hoverCard);
+    chrome.appendChild(hoverCard);
     if (matchMedia('(pointer: coarse)').matches) return; // CSS turns it into a bottom sheet
-    const r = row.getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    const r = toChrome(rr.left, rr.top);
     const w = 300;
-    hoverCard.style.left = `${Math.max(12, r.left - w - 12)}px`;
-    hoverCard.style.top = `${Math.min(Math.max(12, r.top), innerHeight - 260)}px`;
+    hoverCard.style.left = `${Math.max(12, r.x - w - 12)}px`;
+    hoverCard.style.top = `${Math.min(Math.max(12, r.y), view().h - 260)}px`;
   }
 
   function setSidebar(open) {
     if (!open) hidePreviewCard();
+    if (open && !state.sidebar) readIfStale();
     state.sidebar = open;
     sidebar.classList.toggle('open', open);
     if (open) renderSidebar();
@@ -3273,7 +3453,7 @@
     mapEl = el('div', 'map');
     mapEl.setAttribute('role', 'dialog');
     mapEl.setAttribute('aria-label', 'Map of screens');
-    root.appendChild(mapEl);
+    chrome.appendChild(mapEl);
     renderMap(true);
   }
 
@@ -3713,7 +3893,7 @@
     if (on && state.presenting) togglePresent();
     state.mode = on;
     clickLayer.hidden = !on;
-    if (on && state.pinsHidden) setPinsHidden(false);
+    syncPins();
     renderToolbar();
     if (on) closePopover();
   }
@@ -3763,12 +3943,13 @@
       if (state.mode) setMode(false);
       if (state.sidebar) setSidebar(false);
       toolbar.style.display = 'none';
-      pinsLayer.style.display = 'none';
+      syncPins();
       presentDot = el('button', 'present-dot');
+      presentDot.append(icon('comment')); // drawn only where it is tapped (CSS)
       presentDot.title = 'Show comments (H)';
       presentDot.setAttribute('aria-label', 'Show comments');
       presentDot.addEventListener('click', togglePresent);
-      root.appendChild(presentDot);
+      chrome.appendChild(presentDot);
       let hinted = false;
       try {
         hinted = sessionStorage.getItem('fp_present_hint') === '1';
@@ -3776,12 +3957,13 @@
       } catch {
         /* storage blocked */
       }
-      if (!hinted) toast('Hidden — press H to bring comments back', 4000);
+      const touch = matchMedia('(pointer: coarse)').matches;
+      if (!hinted) toast(touch ? 'Hidden — tap the button in the corner to bring comments back' : 'Hidden — press H or click the dot in the corner to bring comments back', 4000);
     } else {
       presentDot?.remove();
       presentDot = null;
       toolbar.style.display = '';
-      pinsLayer.style.display = state.pinsHidden ? 'none' : '';
+      syncPins();
       const saved = presentSaved;
       presentSaved = null;
       renderAll();
@@ -3942,8 +4124,10 @@
      A reviewer who is actually reviewing never notices: their own actions and
      any incoming change reset the pace. */
   let pollTimer = null;
+  let pollDue = 0;
   function schedulePoll(delay = pollEvery) {
     clearTimeout(pollTimer);
+    pollDue = Date.now() + delay;
     pollTimer = setTimeout(async () => {
       if (document.visibilityState === 'visible') await refresh();
       schedulePoll();
@@ -3959,7 +4143,21 @@
     pollSoon();
   });
   // Someone acting on the page is someone who may be about to act on a comment.
-  document.addEventListener('pointerdown', () => (pollEvery = POLL_MS), { capture: true, passive: true });
+  // Resetting the pace alone was not enough: the poll already scheduled could
+  // be four minutes out, and a reviewer back at the page waited all of it to
+  // see a reply that had landed long before ("it takes long to update").
+  function present() {
+    pollEvery = POLL_MS;
+    if (pollDue - Date.now() > POLL_MS) schedulePoll(POLL_MS);
+  }
+  document.addEventListener('pointerdown', present, { capture: true, passive: true });
+  document.addEventListener('keydown', present, { capture: true, passive: true });
+  // Back at the window from another app. visibilitychange does not fire for a
+  // window that was only covered, so focus is the signal.
+  window.addEventListener('focus', () => {
+    readIfStale();
+    present();
+  });
   schedulePoll();
 
   // Long-lived tabs are the #1 source of "it doesn't work" reports: they keep
@@ -3997,7 +4195,7 @@
     if (state.sidebar) renderSidebar();
   }
 
-  if (state.pinsHidden) pinsLayer.style.display = 'none';
+  syncPins();
   state.screen = screenLabel();
   state.screenLabel = screenLabel();
   detectTheme();
@@ -4109,6 +4307,9 @@
     // every shot is refused and the map comes out as a graph of blank cards.
     api,
     get pollEvery() { return pollEvery; },
+    get nextPollIn() { return pollDue - Date.now(); },
+    schedule: (ms) => schedulePoll(ms),
+    forgetLastRead: () => (lastReadAt = 0),
     get state() { return state; },
   };
 

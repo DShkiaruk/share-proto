@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heavy fixture</title>
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #111; background: #fff; }
+  .shell { display: grid; grid-template-columns: 220px 1fr; }
+  .shell.tall { min-height: 100vh; }
+  nav { border-right: 1px solid #ddd; padding: 16px; }
+  nav a { display: block; padding: 6px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
+  nav a.on { background: #eef; }
+  main { padding: 24px; }
+  .row { display: grid; grid-template-columns: 80px 1fr 120px 90px 90px; gap: 8px; padding: 8px; border-bottom: 1px solid #eee; }
+  .row > div > span { display: inline-block; }
+  .sla { font-variant-numeric: tabular-nums; }
+  .badge { padding: 2px 6px; border-radius: 4px; background: #f3f3f3; }
+  .spin { width: 12px; height: 12px; border: 2px solid #999; border-top-color: transparent; border-radius: 50%; animation: s 1s linear infinite; display: inline-block; }
+  .pics img { display: block; width: 600px; height: 340px; margin: 24px 0; background: #eee; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<!-- A stand-in for the prototypes reviewers actually use: a generated
+     dashboard with hundreds of rows and live SLA countdowns, thousands of
+     nodes in all. Parameters:
+       ?rows=N    how many rows (default 600)
+       ?tick=MS   how often the countdowns change (default 1000)
+       ?redraw=1  rebuild the whole list every tick (a vanilla innerHTML app)
+                  instead of changing only the countdown text (React-style)
+       ?pics=N    N lazy pictures below the list — a report full of
+                  screenshots, whose pictures never load until scrolled to
+       ?short=1   no full-height shell: below the content is bare page -->
+<div id="root"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const ROWS = Number(q.get('rows') ?? 600);
+  const TICK = Number(q.get('tick') || 1000);
+  const PICS = Number(q.get('pics') || 0);
+  const SHORT = q.has('short');
+  const REDRAW = q.has('redraw');
+  const screens = { tickets: 'Tickets', dashboard: 'Dashboard', settings: 'Settings' };
+  const start = Date.now();
+  const route = () => (location.hash.replace('#/', '') || 'tickets');
+  function sla(i) {
+    const left = Math.max(0, 3600 - ((Date.now() - start) / 1000 | 0) - i * 7);
+    return `${String(left / 60 | 0).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+  }
+  function rows() {
+    let h = '';
+    for (let i = 0; i < ROWS; i++) {
+      h += `<div class="row"><div><span>#${1000 + i}</span></div><div><span>Customer ${i % 37} cannot reach site ${i % 11}</span> <span class="badge">${['High', 'Medium', 'Low'][i % 3]}</span></div><div><span>Assignee ${i % 9}</span></div><div><span class="sla">${sla(i)}</span></div><div><button>Open</button></div></div>`;
+    }
+    return h;
+  }
+  function pics() {
+    let h = '';
+    for (let i = 0; i < PICS; i++) h += `<img loading="lazy" width="600" height="340" src="/fixture-pics/${i}.jpg" alt="Screenshot ${i}">`;
+    return h ? `<div class="pics">${h}</div>` : '';
+  }
+  function render() {
+    const r = route();
+    document.getElementById('root').innerHTML = `
+      <div class="shell${SHORT ? '' : ' tall'}">
+        <nav>${Object.entries(screens).map(([k, v]) => `<a href="#/${k}" class="${k === r ? 'on' : ''}">${v}</a>`).join('')}</nav>
+        <main>
+          <h1>${screens[r] || 'Tickets'}</h1>
+          <p><span class="spin"></span> Live</p>
+          ${r === 'tickets' ? `<div class="list">${rows()}</div>${pics()}` : `<p>${screens[r]} content</p>`}
+        </main>
+      </div>`;
+  }
+  render();
+  addEventListener('hashchange', render);
+  setInterval(() => {
+    if (REDRAW) return render();
+    document.querySelectorAll('.sla').forEach((n, i) => (n.textContent = sla(i)));
+  }, TICK);
+</script>
+</body>
+</html>
