@@ -139,9 +139,20 @@ comment landing during the check is not skipped.
 - **Reads:** a prototype is not read again within 5 minutes of its last check
   (several sessions opened in a row). One read per check — well inside the
   free storage tier's monthly read budget.
-- **Gone prototypes:** `failingSince` records the first failure; after 30 days
-  of failing the entry is removed and Claude mentions it once ("stopped
-  watching X — it has not answered for a month").
+- **Gone prototypes:** `failingSince` records the first failure and `failures`
+  counts them; after 30 days *and* 5 failed checks the entry is paused (kept,
+  not deleted) and Claude mentions it once. A wrong team password pauses it
+  at once, with a note. `add` again resumes it.
+- **Only attended sessions** (review 2026-10-16): `claude -p`, scripts and
+  agents run the hook too; the check runs only when Claude Code says a person
+  is there (`CLAUDE_CODE_SESSION_ATTENDED=1`, or an entrypoint that is not
+  `sdk-*`), so headless runs neither print nor use up the news.
+- **One check at a time** across processes (a lock file next to the registry).
+- **Late arrivals:** a comment's time is stamped when it is sent and it may
+  become readable later; the check looks back 30 minutes and keeps the keys it
+  already told, so such a comment is told — once.
+- **Size:** the summary stays under 8 000 characters; what does not fit is
+  told next time.
 - **Offline / no Node / broken registry:** the hook prints nothing and exits 0.
   A broken registry is moved aside to `watch.json.broken-<date>`.
 - **Local mode** (temporary tunnel links) is never registered.

@@ -363,7 +363,9 @@ node ~/.claude/skills/share-proto/scripts/watch.mjs add https://<real-domain>/ \
 - Never for local mode: its links die with the process.
 - **Ask first only** when the client was promised its data stays inside its perimeter: the summary puts comment text into the designer's Claude session. If the answer is no, skip this step.
 
-Tell the designer one line: "When you start a new Claude session, I'll tell you if anyone commented on this prototype." Nothing else to explain. `watch.mjs list` shows what is watched; `watch.mjs remove <url>` stops one; `watch.mjs uninstall` removes the hook.
+- It refuses the client password (it would never see the team's comments) and a room name the server would not accept.
+
+Tell the designer one line: "When you start a new Claude session, I'll tell you if anyone commented on this prototype." Nothing else to explain. `watch.mjs list` shows what is watched and anything paused (a changed password, a month of silence) — `add` again resumes it; `watch.mjs remove <url>` stops one; `watch.mjs uninstall` removes the hook.
 
 ## Notes
 

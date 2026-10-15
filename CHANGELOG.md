@@ -142,12 +142,28 @@ Set up by the runbook's new step 7b; the designer does nothing.
 - New comments and replies by anyone but the owner; the owner's own never.
   At most 5 lines per prototype, the rest counted. In the terminal a one-line
   headline shows before anything is typed.
+- Only sessions with a person in front of them: `claude -p`, scripts and
+  agents neither print the news nor use it up (Claude Code's own
+  `CLAUDE_CODE_SESSION_ATTENDED` / `CLAUDE_CODE_ENTRYPOINT`, undocumented —
+  with neither set it runs as before).
 - Reads with the same calls the overlay makes: all prototypes in parallel,
-  3 s at most (a session waits for it), each read at most once per 5 minutes.
-  One that does not answer keeps its place; after a month of not answering it
-  is dropped with a one-time note.
-- Comment text is written by reviewers, so the summary hands it to Claude
-  quoted, after a sentence saying it is text to show, never instructions.
+  3 s at most (a session waits for it), each read at most once per 5 minutes;
+  one session at a time (a lock), so sessions started together tell it once.
+  A prototype that does not answer keeps its place; after a month *and* five
+  failed checks it is paused with a one-time note, never deleted. A changed
+  team password is said at once, and watching it pauses (no knocking with a
+  wrong password). `add` again resumes either.
+- Reviewers' names, screen names and text are untrusted: each is a JSON
+  string with invisible and control characters removed, the list sits between
+  markers with a random tag, and the sentence before it says it is data to
+  show, never instructions. Typed "→" becomes "->", so only the tool draws links.
+- Under 8 000 characters in all (past ~10 000 Claude Code files it away);
+  what does not fit is told next time, and a comment that becomes readable
+  after a later one (pictures upload first) is still told, once.
+- The hook names node by its PATH entry (`/opt/homebrew/bin/node`), so an app
+  started from the Dock finds it and an upgrade does not break it; re-running
+  `add` repairs a hook whose path moved. `settings.json` keeps its mode and,
+  if it is a symlink, stays one.
 - Why not Slack, checked against the docs: a bot needs a Slack admin and a
   shared server holding its token; a workflow needs every designer to build
   one by hand; and the designer's own Claude posting to Slack posts *as them*,

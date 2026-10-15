@@ -968,3 +968,23 @@ git commit -m "Runbook: the designer's Claude tells them about new comments"
   they cannot be driven from this machine. Decision: `SHOW_HEADLINE = true`.
 - Spec deviation: `add` starts `lastSeen` from the server's newest timestamp,
   not this machine's clock (Review Focus #3); the spec is updated to match.
+- Task 6 end to end: `claude -p` with a scratch registry opened its reply with
+  the summary (in Ukrainian, link intact); interactive (expect) showed the
+  headline before typing and the summary in the first reply; a comment already
+  told was not repeated.
+- Whole-branch review (fresh agent): 15 confirmed findings, all fixed with a
+  test each — headless sessions taking the news (now attended-only, verified
+  env: `CLAUDE_CODE_SESSION_ATTENDED` 1 vs 0, `CLAUDE_CODE_ENTRYPOINT` cli vs
+  sdk-cli); reviewer text breaking out of quotes / invisible characters /
+  arrow-links (JSON strings, stripped, fenced with a nonce); one junk thread
+  silencing every prototype; late-visible comments (30-min look-back + told
+  keys); unbounded output (8 000 cap, only rendered marked told; flush before
+  exit); give-up after two failures (now month + 5 failures, paused not
+  deleted; wrong password paused at once); symlinked invocation; cross-process
+  race (lock; 4-process test, 5/5 green with the lock, 3/3 red without);
+  `ours()` matching other tools and stale paths (repair → 'updated');
+  settings mode/symlink; client password and invalid rooms refused;
+  future `lastCheck`; links for page-less threads; damaged registry said once.
+  Found while fixing: the look-back re-read what existed at `add` (seed
+  `told`), and seeding swallowed news for entries written before `told`
+  (only seed what is not newer than `lastSeen`).
