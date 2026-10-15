@@ -136,9 +136,15 @@
 
 .pin {
   position: absolute;
-  width: 28px;
+  /* Grows past two digits (#9032 on a busy room) instead of spilling: the
+     radii are fixed, so a wider pin is a pill with the same pointed corner,
+     and the point (left edge) stays on the spot it marks. */
+  box-sizing: border-box;
+  min-width: 28px;
   height: 28px;
-  border-radius: 50% 50% 50% 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+  border-radius: 14px 14px 14px 4px;
   border: 1px solid rgb(0 0 0 / 0.08);
   box-shadow: var(--shadow-md);
   font-size: 12px;
@@ -264,7 +270,10 @@
 .avatar.r-client {
   border-color: transparent;
   box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--client-ring);
-  margin: 1.5px;
+  /* The ring is drawn 3px outside the box; the margin is the room it is
+     drawn in. With less, a row that clips its overflow (the thread header,
+     for long names) cut the ring off at the top and bottom. */
+  margin: 3px;
 }
 
 /* ---- popover (composer + thread) ---- */
@@ -950,8 +959,9 @@
 
 @media (pointer: coarse) {
   .pin {
-    width: 34px;
+    min-width: 34px;
     height: 34px;
+    border-radius: 17px 17px 17px 4px;
     font-size: 13px;
     transform: translate(-5px, -34px);
   }
@@ -1005,22 +1015,40 @@
   .tb-btn .tb-label {
     display: none;
   }
+  /* Icon only: at least as wide as tall, so the active fill is a circle (a
+     40×44 button drew an oval); one with a count stays a pill. */
   .tb-btn {
-    padding: 0 12px;
+    padding: 0 10px;
+    min-width: 36px;
+    justify-content: center;
   }
   .toolbar {
     max-width: calc(100% - 16px);
   }
 }
+@media (max-width: 480px) and (pointer: coarse) {
+  .tb-btn {
+    min-width: 44px;
+  }
+}
 @media (max-width: 359px) {
   .tb-btn {
-    padding: 0 10px;
+    padding: 0 8px;
   }
   .tb-icon {
     width: 40px;
   }
   .tb-divider {
     margin: 0 1px;
+  }
+}
+/* The smallest phones trade 4px of each target for a toolbar that fits —
+   still circles, still 40px. */
+@media (max-width: 359px) and (pointer: coarse) {
+  .tb-btn,
+  .tb-icon {
+    height: 40px;
+    min-width: 40px;
   }
 }
 

@@ -202,6 +202,48 @@ test('comments already saved with a broken page-background address find their pl
   expect(shown).toEqual([true, true]);
 });
 
+/* ---------- reported from a phone, 2026-10-15: things drawn wrong ---------- */
+
+// A client's avatar wears a ring drawn outside its box; the header row clips
+// what overflows it (long names), and it cut the ring off at top and bottom.
+test('a client’s ring is drawn whole in the thread header', async ({ page }) => {
+  await login(page, 'Maks', CLIENT);
+  await postAt(page, 560, 240, 'ring: whole');
+  await expect(inOverlay(page, '.popover .head .who .avatar.r-client')).toBeVisible();
+  const clip = await page.evaluate(() => {
+    const av = document.querySelector('[data-fp-host]').shadowRoot.querySelector('.popover .head .who .avatar.r-client');
+    const a = av.getBoundingClientRect();
+    const ring = { top: a.top - 3, bottom: a.bottom + 3, left: a.left - 3, right: a.right + 3 };
+    for (let n = av.parentElement; n; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+      const c = n.getBoundingClientRect();
+      return { by: n.className, over: Math.max(c.top - ring.top, ring.bottom - c.bottom, c.left - ring.left, ring.right - c.right) };
+    }
+    return { by: null, over: 0 };
+  });
+  expect(clip.over, `ring cut by .${clip.by}`).toBeLessThanOrEqual(0.5);
+});
+
+// Numbers are global and only grow: a busy room reaches four digits, and a
+// fixed-width pin spilled them over its edge.
+test('a four-digit number fits inside its pin', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await postAt(page, 600, 300, 'pin: wide number');
+  await page.keyboard.press('Escape');
+  const fit = await page.evaluate(() => {
+    const pin = [...document.querySelector('[data-fp-host]').shadowRoot.querySelectorAll('.pins .pin')].find((p) => p.style.display !== 'none');
+    pin.firstChild.textContent = '9032';
+    const p = pin.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(pin.firstChild);
+    const t = range.getBoundingClientRect();
+    return { left: t.left - p.left, right: p.right - t.right };
+  });
+  expect(fit.left).toBeGreaterThanOrEqual(2);
+  expect(fit.right).toBeGreaterThanOrEqual(2);
+});
+
 /* ---------- "on a phone it's unclear" ---------- */
 
 test.describe('on a phone', () => {
@@ -225,6 +267,14 @@ test.describe('on a phone', () => {
       }
     });
   }
+
+  // Icon only, a 40×44 button drew its active fill as an oval.
+  test('the active Comment button is a circle', async ({ page }) => {
+    await login(page, 'Phone Designer', TEAM);
+    const b = await inOverlay(page, '.tb-btn').first().boundingBox();
+    expect(Math.abs(b.width - b.height)).toBeLessThan(1);
+    expect(b.height).toBeGreaterThanOrEqual(40);
+  });
 
   test('everything hides with a tap, and one tap brings it back', async ({ page }) => {
     await login(page, 'Phone Client', CLIENT);
