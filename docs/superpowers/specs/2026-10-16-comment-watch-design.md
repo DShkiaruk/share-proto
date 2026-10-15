@@ -72,8 +72,10 @@ deploy (SKILL.md step 7b)                       new Claude Code session
 
 - `add <page-url> --password <team> --name <designer name> [--api <comments host>] [--room <room>] [--title <title>]`
   Signs in once to prove the password works (`POST /api/login`, the same call
-  the login page makes), stores the entry, sets `lastSeen = now` (nothing old
-  is reported as new), installs the hook if absent. Idempotent: adding the same
+  the login page makes), stores the entry, sets `lastSeen` to the newest
+  timestamp already on the server — the server's clock, not the laptop's, so
+  nothing old is reported and nothing new is skipped — and installs the hook
+  if absent. Idempotent: adding the same
   page again updates it.
 - `remove <page-url>` · `list` (title, URL, last check, last error) — for
   Claude to use when asked, never needed by the designer.
