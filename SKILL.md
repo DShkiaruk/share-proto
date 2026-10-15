@@ -195,6 +195,7 @@ numbers and the learned navigation are kept.
 ## Hard rules
 
 - **Never rewrite the storage model in `api/comments.js` / `lib/storage.js`.** Events are append-only and are the source of truth; `state.json` is a derived document written with ETag preconditions and read with `useCache:false`. Overwriting event blobs or reading the document through the CDN cache brings back silently-reverting replies (v1 lesson) and quota-burning `list()` polls (v2 lesson).
+- **Never make `/api/version` depend on who asks, and never drop the purge on write** (`onWrite: purgeVersion` in `api/comments.js`). The CDN serves one answer to everyone, so a session-dependent answer would leak across readers. Without the purge, open tabs see new comments only when the cache expires (10 min). `scripts/smoke.sh` checks both: "a repeated ask comes from the CDN" and "a write moves the version within 6 s".
 - **Never remove the overlay's anchor model** (path + tag + text-hint). Screen-hash approaches break on responsive prototypes that render different DOM per breakpoint.
 - The client role must never receive designer threads from the API. If you touch the API, re-verify this before finishing.
 - **Never fork the thread rules into the Worker.** `worker/src/room.js` imports `template/lib/{threads,state,media}.js` and `worker/src/index.js` imports `template/lib/{session,cors}.js`; a copy there would drift silently and only show up as a role-leak or a lost comment. Three servers, one set of rules.

@@ -6,6 +6,13 @@
   const PASTELS = ['#dbffd5', '#d5edff', '#ffd4b1', '#f4d5ff', '#fff3c4', '#ffd5d5'];
   const POLL_MS = 25000; // how soon after a change we look again
   const POLL_MAX_MS = 4 * 60 * 1000; // how rarely we look when nothing happens
+  // Where the server can answer "has anything changed?" for next to nothing
+  // (template/lib/changes.js), the overlay asks that instead of reading, and
+  // reads only when the answer is yes.
+  const ASK_MS = 15000; // while someone is at the page
+  const ASK_IDLE_MS = 2 * 60 * 1000; // once nobody has been, for HERE_FOR_MS
+  const HERE_FOR_MS = 3 * 60 * 1000;
+  const ASK_AT_MOST_MS = 3000; // a click asks; a burst of clicks asks once
 
   /* ---------- embed mode ----------
      When this script is served from a different origin than the page it runs
@@ -1057,6 +1064,10 @@
     };
     return (n) => {
       if (n === host) return false;
+      // The library's own sandbox frame, appended to <body> for the copy: 0×0
+      // and hidden, so nothing in the picture, but copying its document took
+      // another path through the library and made every copy a careful one.
+      if (n.nodeType === 1 && n.tagName === 'IFRAME' && n.id.startsWith('__SANDBOX__')) return false;
       const p = n.parentElement;
       if (!p || p === document.documentElement || p === document.body) return true;
       if (isOutside(p)) return n.nodeType === 1 && /fixed|sticky/.test(getComputedStyle(n).position);
@@ -1120,8 +1131,9 @@
         if (top) {
           isOpen.delete(top);
           if (top.namespaceURI === SVG_NS) inSvg--;
-          // a video comes out as its frame; anything else must match
-          if (top.nodeName !== clone.nodeName && top.nodeName !== 'VIDEO') lost = true;
+          // a canvas comes out as a picture of itself, a video as its frame;
+          // anything else must match
+          if (top.nodeName !== clone.nodeName && top.nodeName !== 'VIDEO' && !(top.nodeName === 'CANVAS' && clone.nodeName === 'IMG')) lost = true;
         }
         if (changed) return Promise.reject(STALE_COPY);
         if (inSvg || performance.now() - since < SLICE_MS) return undefined;
@@ -1131,8 +1143,14 @@
         });
       },
       stop: () => mo.disconnect(),
+      get careful() {
+        return lost;
+      },
     };
   }
+  // How the last picture was taken, for the tests: in turns or redone in one
+  // go, and whether the walk ever stopped matching (any removal then counts).
+  let lastCopy = null;
 
   // Rasterize the current viewport to a JPEG data URL. Shared by the comment
   // preview and the map's automatic screen shots.
@@ -1172,11 +1190,14 @@
         return Promise.race([work, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
       };
       let full;
+      const turns = inTurns();
       try {
-        full = await copy(inTurns());
+        full = await copy(turns);
+        lastCopy = { redone: false, careful: turns.careful };
       } catch (e) {
         if (e !== STALE_COPY) throw e;
         full = await copy(null);
+        lastCopy = { redone: true, careful: turns.careful };
       }
       const c = document.createElement('canvas');
       c.width = Math.round(innerWidth * scale);
@@ -1268,7 +1289,45 @@
   // one per 10 s: on a free storage tier every read is counted.
   const FRESH_MS = 10000;
   function readIfStale() {
+    if (changesPath) return askSoon();
     if (Date.now() - lastReadAt > FRESH_MS) refresh();
+  }
+
+  /* "Has anything changed?" — the server says where to ask (`changes`) and
+     which version its read was of (`ver`). Asking is a cached answer on
+     Vercel, so a click can ask; the full read follows only on a change. An
+     endpoint that keeps failing is given up for this page, and the overlay
+     goes back to reading in full on the old pace. */
+  let changesPath = null;
+  let readVer = null;
+  let lastAskAt = 0;
+  let asking = null;
+  let asks = 0;
+  let askFailures = 0;
+  function askChanged() {
+    if (!changesPath) return refresh();
+    if (asking) return asking;
+    lastAskAt = Date.now();
+    asks++;
+    asking = (async () => {
+      try {
+        const r = await fetch(apiUrl(changesPath), { credentials: 'omit' });
+        if (!r.ok) throw new Error(`version ${r.status}`);
+        const { v } = await r.json();
+        if (typeof v !== 'string') throw new Error('no version');
+        askFailures = 0;
+        if (v !== readVer) await refresh();
+      } catch {
+        if (++askFailures >= 3) changesPath = null;
+        await refresh();
+      } finally {
+        asking = null;
+      }
+    })();
+    return asking;
+  }
+  function askSoon() {
+    if (Date.now() - lastAskAt > ASK_AT_MOST_MS) askChanged();
   }
   let lastSig = '';
   let pollEvery = POLL_MS;
@@ -1296,6 +1355,8 @@
           }
           state.name = data.name || '';
           state.serverV = Number(data.v) || 1;
+          readVer = typeof data.ver === 'string' ? data.ver : null;
+          if (askFailures < 3) changesPath = typeof data.changes === 'string' ? data.changes : null;
           state.nav = data.nav || {};
           state.navAt = data.navAt || {};
           state.navTrail = data.navTrail || {};
@@ -4216,11 +4277,15 @@
      any incoming change reset the pace. */
   let pollTimer = null;
   let pollDue = 0;
-  function schedulePoll(delay = pollEvery) {
+  let hereAt = Date.now();
+  // Asking is cheap, so it keeps a steady pace while someone is here and
+  // slows down only once nobody has been; reading in full keeps the old pace.
+  const nextDelay = () => (changesPath ? (Date.now() - hereAt < HERE_FOR_MS ? ASK_MS : ASK_IDLE_MS) : pollEvery);
+  function schedulePoll(delay = nextDelay()) {
     clearTimeout(pollTimer);
     pollDue = Date.now() + delay;
     pollTimer = setTimeout(async () => {
-      if (document.visibilityState === 'visible') await refresh();
+      if (document.visibilityState === 'visible') await (changesPath ? askChanged() : refresh());
       schedulePoll();
     }, delay);
   }
@@ -4230,6 +4295,11 @@
   }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    hereAt = Date.now();
+    if (changesPath) {
+      askChanged();
+      return schedulePoll(ASK_MS);
+    }
     refresh();
     pollSoon();
   });
@@ -4237,7 +4307,15 @@
   // Resetting the pace alone was not enough: the poll already scheduled could
   // be four minutes out, and a reviewer back at the page waited all of it to
   // see a reply that had landed long before ("it takes long to update").
+  // Where asking is cheap, the click itself asks: a reply that landed while
+  // the reader was away shows on their first click, not 15 s later.
   function present() {
+    hereAt = Date.now();
+    if (changesPath) {
+      askSoon();
+      if (pollDue - Date.now() > ASK_MS) schedulePoll(ASK_MS);
+      return;
+    }
     pollEvery = POLL_MS;
     if (pollDue - Date.now() > POLL_MS) schedulePoll(POLL_MS);
   }
@@ -4399,6 +4477,10 @@
     api,
     get pollEvery() { return pollEvery; },
     get nextPollIn() { return pollDue - Date.now(); },
+    get asks() { return asks; },
+    get lastCopy() { return lastCopy; },
+    ask: () => askChanged(),
+    get changes() { return changesPath; },
     schedule: (ms) => schedulePoll(ms),
     forgetLastRead: () => (lastReadAt = 0),
     get state() { return state; },

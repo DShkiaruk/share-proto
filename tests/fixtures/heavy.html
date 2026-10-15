@@ -34,7 +34,7 @@
        ?short=1   no full-height shell: below the content is bare page
        ?chart=1   a small chart in view whose groups are taken out and put
                   back every animation frame, the way a real prototype's
-                  animated SVG does -->
+                  animated SVG does, and a canvas beside it -->
 <div id="root"></div>
 <script>
   const q = new URLSearchParams(location.search);
@@ -71,7 +71,7 @@
         <main>
           <h1>${screens[r] || 'Tickets'}</h1>
           <p><span class="spin"></span> Live</p>
-          ${CHART ? '<svg id="chart" width="300" height="60" viewBox="0 0 300 60"></svg>' : ''}
+          ${CHART ? '<svg id="chart" width="300" height="60" viewBox="0 0 300 60"></svg> <canvas id="spark" width="120" height="30"></canvas>' : ''}
           ${r === 'tickets' ? `<div class="list">${rows()}</div>${pics()}` : `<p>${screens[r]} content</p>`}
         </main>
       </div>`;
@@ -79,6 +79,8 @@
   render();
   addEventListener('hashchange', render);
   if (CHART) {
+    const g2 = document.getElementById('spark')?.getContext('2d');
+    if (g2) { g2.fillStyle = '#ff9f43'; g2.fillRect(0, 10, 120, 10); }
     const NS = 'http://www.w3.org/2000/svg';
     const draw = (t) => {
       const svg = document.getElementById('chart');

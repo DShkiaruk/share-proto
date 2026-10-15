@@ -36,6 +36,7 @@ const { parseImages, parseImageDataUrl } = await import('./lib/media.js');
 const { sanitizeImport, importFile, mergeImport } = await import('./lib/importing.js');
 // Empty unless this install's comments live somewhere else (assemble.py --comments).
 const { COMMENTS_HOST, COMMENTS_ROOM } = await import('./lib/comments-host.js');
+const { CHANGES_PATH, VERSION_HEADERS } = await import('./lib/changes.js');
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -116,8 +117,18 @@ function roomStore(room) {
   return (store.rooms[key] ||= { threads: [], nav: {}, versions: [], shots: {}, mapmeta: { aliases: {}, hidden: [] } });
 }
 
+// The rooms' version for "has anything changed?" (lib/changes.js): every
+// write passes through persist(), so a count of them, tagged with this
+// process's start, changes exactly when something may have. One count for
+// every room — a write in one makes the others read once more, and nothing
+// is cheaper than a read here.
+const BOOT = Date.now().toString(36);
+let writes = 0;
+const version = () => `${BOOT}.${writes}`;
+
 let writeChain = Promise.resolve();
 function persist() {
+  writes++;
   writeChain = writeChain
     .then(async () => {
       const tmp = path.join(DATA, `.comments-${process.pid}.tmp`);
@@ -259,6 +270,8 @@ async function apiComments(req, res, session) {
     for (const [k, v] of Object.entries(S.nav)) if (v.trail?.length) navTrail[k] = v.trail;
     return json(res, 200, {
       v: 2,
+      ver: version(),
+      changes: CHANGES_PATH,
       role,
       name: author,
       nav,
@@ -609,6 +622,12 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname.startsWith('/api/')) {
       if (applyCors(req, res, process.env.ALLOWED_ORIGINS)) return;
+    }
+    // No session: the same answer for every reader (lib/changes.js). Spelled
+    // out, not CHANGES_PATH, so the route parity check can read it.
+    if (pathname === '/api/version') {
+      res.writeHead(200, VERSION_HEADERS);
+      return res.end(JSON.stringify({ v: version() }));
     }
     if (pathname === '/api/login') return await apiLogin(req, res);
     if (pathname === '/api/logout') return apiLogout(req, res);

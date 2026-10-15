@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, mouseClick, inOverlay, apiPost } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiPost, asOlderServer } from './helpers.mjs';
 
 const TEAM = 'team-e2e';
 
@@ -10,7 +10,82 @@ const TEAM = 'team-e2e';
    backing off safe — it does back off, and it comes straight back. */
 test.describe.configure({ mode: 'serial' });
 
+/* ---------- a server that can say what changed (lib/changes.js) ---------- */
+
+// Every GET /api/comments a page makes, from here on.
+function countReads(page) {
+  const reads = [];
+  const asks = [];
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (u.pathname === '/api/comments' && r.method() === 'GET') reads.push(u.href);
+    if (u.pathname === '/api/version') asks.push(u.href);
+  });
+  return { reads, asks };
+}
+
+test('asking whether anything changed costs no read while nothing has', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  expect(await page.evaluate(() => window.__fp.changes)).toBe('/api/version');
+  const seen = countReads(page);
+  for (let i = 0; i < 5; i++) await page.evaluate(() => window.__fp.ask());
+  expect(seen.asks.length).toBe(5);
+  expect(seen.reads.length).toBe(0);
+});
+
+test('a change is read once, and asking is quiet again after it', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  const seen = countReads(page);
+  expect(
+    await apiPost(page, { action: 'create', text: 'budget: read once', screen: 'Home', screenLabel: 'Home' })
+  ).toBe(200);
+  await page.evaluate(() => window.__fp.ask());
+  expect(seen.reads.length).toBe(1);
+  expect(await page.evaluate(() => window.__fp.state.threads.some((t) => t.messages[0].text === 'budget: read once'))).toBe(true);
+  for (let i = 0; i < 3; i++) await page.evaluate(() => window.__fp.ask());
+  expect(seen.reads.length).toBe(1);
+});
+
+test('a click asks, and a burst of clicks asks once', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await page.waitForTimeout(3200); // past the at-most-every-3-s window of the first read
+  const before = await page.evaluate(() => window.__fp.asks);
+  for (let i = 0; i < 5; i++) await page.mouse.click(400 + i * 10, 300);
+  expect(await page.evaluate(() => window.__fp.asks)).toBe(before + 1);
+});
+
+test('someone else’s comment shows on the reader’s next click, not on the next poll', async ({ page, browser }) => {
+  await login(page, 'Designer', TEAM);
+  await page.evaluate(() => window.__fp.schedule(10 * 60 * 1000)); // no poll will come
+  await page.waitForTimeout(3200);
+  const other = await browser.newPage({ baseURL: 'http://localhost:4173', viewport: { width: 1280, height: 800 } });
+  await login(other, 'Olena', 'client-e2e');
+  expect(
+    await apiPost(other, { action: 'create', text: 'budget: seen on click', screen: 'Home', screenLabel: 'Home' })
+  ).toBe(200);
+  await other.close();
+  await page.mouse.click(400, 300);
+  await expect
+    .poll(() => page.evaluate(() => window.__fp.state.threads.some((t) => t.messages[0].text === 'budget: seen on click')), { timeout: 2000 })
+    .toBe(true);
+});
+
+test('an endpoint that keeps failing is given up, and reading takes over', async ({ page }) => {
+  await login(page, 'Designer', TEAM);
+  await page.route('**/api/version*', (route) => route.fulfill({ status: 500, body: '{}' }));
+  const seen = countReads(page);
+  for (let i = 0; i < 3; i++) await page.evaluate(() => window.__fp.ask());
+  // each failed ask reads in full, so nothing is missed meanwhile
+  expect(seen.reads.length).toBe(3);
+  expect(await page.evaluate(() => window.__fp.changes)).toBe(null);
+  await page.evaluate(() => window.__fp.ask());
+  expect(seen.asks.length).toBe(3);
+});
+
+/* ---------- an older server: every poll is a full read ---------- */
+
 test('a quiet room is polled less and less', async ({ page }) => {
+  await asOlderServer(page);
   await login(page, 'Designer', TEAM);
   const pace = () => page.evaluate(() => window.__fp.pollEvery);
   expect(await pace()).toBe(25000);
@@ -31,6 +106,7 @@ test('a quiet room is polled less and less', async ({ page }) => {
 });
 
 test('anything actually happening brings it straight back', async ({ page }) => {
+  await asOlderServer(page);
   await login(page, 'Designer', TEAM);
   await page.evaluate(async () => {
     for (let i = 0; i < 6; i++) await window.__fp.refresh();

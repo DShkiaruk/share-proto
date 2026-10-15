@@ -1,5 +1,5 @@
 import { test, expect, devices } from '@playwright/test';
-import { login, mouseClick, inOverlay, apiGet } from './helpers.mjs';
+import { login, mouseClick, inOverlay, apiGet, asOlderServer } from './helpers.mjs';
 
 /* What reviewers ran into on live links (October 2026), each written down as
    the check that would have caught it:
@@ -83,11 +83,18 @@ test('a chart that redraws every frame is still copied in turns', async ({ page 
   await page.waitForTimeout(500);
   const copies = await countCopies(page);
   await startLongTasks(page);
-  await postAt(page, 700, 420, 'freeze: live chart');
-  await expect.poll(async () => (await threadByText(page, 'freeze: live chart'))?.preview || null, { timeout: 10_000 }).not.toBeNull();
+  // unique per run: a repeat must not find the last run's thread and its picture
+  const chartText = `freeze: live chart ${Date.now()}`;
+  await postAt(page, 700, 420, chartText);
+  await expect.poll(async () => (await threadByText(page, chartText))?.preview || null, { timeout: 10_000 }).not.toBeNull();
   // A real prototype takes SVG groups out every 16 ms. Treating any removal
   // as damage sent every capture there back to one long copy.
   expect(await copies()).toBe(1);
+  // …and the walk was followed all the way. A copy that lost track (the
+  // library's own sandbox frame was copied by another path, a canvas comes
+  // out as a picture) treats any removal as damage — that is what made this
+  // case fall back, but only under load.
+  expect(await page.evaluate(() => window.__fp.lastCopy)).toEqual({ redone: false, careful: false });
   expect(await longest(page)).toBeLessThan(250);
 });
 
@@ -97,11 +104,14 @@ test('a list rebuilt while the picture is taken still gets a whole picture', asy
   await page.waitForFunction(() => Boolean(window.__fp?.state.role));
   await page.waitForTimeout(500);
   const copies = await countCopies(page);
-  await postAt(page, 700, 420, 'freeze: rebuilt list');
-  await expect.poll(async () => (await threadByText(page, 'freeze: rebuilt list'))?.preview || null, { timeout: 10_000 }).not.toBeNull();
+  // unique per run: a repeat must not find the last run's thread and its picture
+  const listText = `freeze: rebuilt list ${Date.now()}`;
+  await postAt(page, 700, 420, listText);
+  await expect.poll(async () => (await threadByText(page, listText))?.preview || null, { timeout: 10_000 }).not.toBeNull();
   // Rows taken out mid-copy end the library's walk early: the first copy is
   // dropped and the picture is taken again in one go.
   expect(await copies()).toBe(2);
+  expect((await page.evaluate(() => window.__fp.lastCopy)).redone).toBe(true);
 });
 
 test('a page of lazy pictures still gets its comment picture, and quickly', async ({ page }) => {
@@ -148,7 +158,10 @@ test('a reply shows at once, too', async ({ page }) => {
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
-test('a tab gone quiet looks again soon once the reader is back', async ({ page }) => {
+// A server that can say what changed is asked on the click itself (budget.spec);
+// this is the path for one that cannot.
+test('a tab gone quiet looks again soon once the reader is back (older server)', async ({ page }) => {
+  await asOlderServer(page);
   await login(page, 'Designer', TEAM);
   await page.evaluate(async () => {
     for (let i = 0; i < 20; i++) await window.__fp.refresh();

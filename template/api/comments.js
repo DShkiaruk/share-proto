@@ -8,6 +8,8 @@ import * as storage from '../lib/storage.js';
 import { createStateStore, applyVersionEvent, applyShot, applyMapMeta, labelKey } from '../lib/state.js';
 import { sessionFromHeaders, sessionAllowsRoom } from '../lib/session.js';
 import { applyCors, roomFromReq } from '../lib/cors.js';
+import { CHANGES_PATH, versionTag } from '../lib/changes.js';
+import { dangerouslyDeleteByTag } from '@vercel/functions';
 
 /* Storage model (v2):
    - events are append-only blobs (source of truth):
@@ -28,7 +30,16 @@ const NAV_CAP = 500;
 const ts = (at) => String(at).padStart(PAD, '0');
 const uuid = () => crypto.randomUUID();
 
-const store = createStateStore(storage, { navCap: NAV_CAP });
+// Every write to a room's document drops the CDN's cached answer to "has
+// anything changed?" (api/version.js), so open tabs see it within a second
+// rather than when the cache expires. Only on Vercel: elsewhere there is no
+// CDN cache to drop, and the call has nothing to talk to.
+async function purgeVersion(root) {
+  if (!process.env.VERCEL) return;
+  const room = root.startsWith('rooms/') ? root.slice(6, -1) : '';
+  await dangerouslyDeleteByTag(versionTag(room));
+}
+const store = createStateStore(storage, { navCap: NAV_CAP, onWrite: purgeVersion });
 const MAX_SHOTS = 200;
 
 // Screens the designer hid are dropped from a client's copy of the map.
@@ -63,10 +74,14 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     const wantRebuild = url.searchParams.get('rebuild') === '1' && role === 'designer';
-    const { state, path } = wantRebuild ? await store.forceRebuild(root) : await store.loadState(root);
+    const { state, etag, path } = wantRebuild ? await store.forceRebuild(root) : await store.loadState(root);
     res.setHeader('X-Store-Path', path);
     return res.status(200).json({
       v: 2, // the overlay refuses to offer v2-only actions to an older server
+      // The version this read is of, and where to ask whether it is still
+      // current (lib/changes.js). A rebuild has no version: the next ask reads.
+      ver: etag || null,
+      changes: CHANGES_PATH,
       role,
       name: author,
       nav: publicNav(state.nav),

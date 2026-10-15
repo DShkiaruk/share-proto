@@ -424,3 +424,20 @@ test('only a designer may import, and pictures come one at a time', async () => 
   assert.equal(bad.payload.imported, 0, 'it falls through to an empty import rather than writing');
   assert.equal(r.s.map.has('f:../escape.jpg'), false);
 });
+
+// "Has anything changed?" (template/lib/changes.js): the version a read
+// carries must move with every post and stay put otherwise, or a tab either
+// misses a comment or reads for nothing.
+test('the room’s version moves with every post, and the read carries it', async () => {
+  const r = room();
+  const first = await r.get('designer', 'Ann');
+  assert.equal(first.changes, '/api/version');
+  assert.equal(first.ver, r.version());
+  assert.equal((await r.get('designer', 'Ann')).ver, first.ver, 'a read alone does not move it');
+  await create(r, 'client', 'Olena');
+  const after = await r.get('designer', 'Ann');
+  assert.notEqual(after.ver, first.ver);
+  await r.post('client', 'Olena', { action: 'nonsense' });
+  assert.notEqual(r.version(), after.ver, 'a refused post moves it too: one read, never a miss');
+  assert.equal(new Room(memStorage()).version().split('.')[1], '0');
+});

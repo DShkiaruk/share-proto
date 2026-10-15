@@ -71,11 +71,23 @@ export function applyVersionEvent(versions, ev) {
 export const isValidState = (d) =>
   Boolean(d && d.v === 2 && Array.isArray(d.threads) && d.nav && typeof d.nav === 'object');
 
-export function createStateStore(storage, { navCap = 500, attempts = 4 } = {}) {
+// onWrite(root) runs after every successful write of a room's document, so a
+// cached "has anything changed?" answer can be dropped (lib/changes.js). It
+// must not throw; if it does, the write still stands.
+export function createStateStore(storage, { navCap = 500, attempts = 4, onWrite = null } = {}) {
   const doc = (root) => `${root}state.json`;
   const isConflict = (e) => e instanceof storage.ConflictError;
-  const write = (root, next, etag) =>
-    storage.writeJson(doc(root), next, etag ? { ifMatch: etag } : { ifAbsent: true });
+  const write = async (root, next, etag) => {
+    const out = await storage.writeJson(doc(root), next, etag ? { ifMatch: etag } : { ifAbsent: true });
+    if (onWrite) {
+      try {
+        await onWrite(root);
+      } catch (e) {
+        console.warn(`onWrite failed for "${root || '/'}": ${e?.message}`);
+      }
+    }
+    return out;
+  };
 
   async function rebuild(root) {
     const [threadEvents, navEvents, versionEvents, shotEvents, metaEvents] = await Promise.all([

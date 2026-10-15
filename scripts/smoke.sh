@@ -63,6 +63,23 @@ check "$(code "$API")" 401 "GET /api/comments without cookie → 401"
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$D/" | grep -c 'overlay.js')" 1 "designer sees prototype with overlay"
 check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | jq_ 'print(d.get("role"), isinstance(d.get("threads"), list))')" "designer True" "designer GET /api/comments"
 
+# "Has anything changed?" (template/lib/changes.js): a public answer, the same
+# for everyone, that an open tab asks instead of reading the room. On Vercel it
+# comes from the CDN, and every write must drop it.
+VURL="$D/api/version$Q"
+ask_v() { curl -s "$VURL" | jq_ 'print(d.get("v",""))'; }
+V0=$(ask_v)
+check "$([ -n "$V0" ] && echo answered)" answered "GET /api/version answers without a session"
+check "$(curl -s -D - -o /dev/null "$VURL" | tr -d '\r' | grep -ci '^access-control-allow-origin: \*$')" 1 "…for any page, with no credentials"
+check "$(curl -s -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | jq_ 'print(d.get("changes"), bool(d.get("ver")) or d.get("ver") is None)')" "/api/version True" "GET /api/comments says where to ask, and which version it read"
+cache_of() { curl -s -D - -o /dev/null "$VURL" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-vercel-cache"{print $2}'; }
+C1=$(cache_of); C2=$(cache_of); C3=$(cache_of)
+if [ -z "$C1$C2$C3" ]; then
+  skip "a repeated ask comes from the CDN — not behind Vercel's CDN"
+else
+  check "$(printf '%s %s' "$C2" "$C3" | grep -c 'HIT')" 1 "a repeated ask comes from the CDN, not the function ($C1 $C2 $C3)"
+fi
+
 # Role isolation: a designer-created thread must be invisible to the client.
 check "$(curl -s -D - -o /dev/null -b "$TMP/team.jar" -K "$TMP/team.conf" "$API" | grep -ci 'cache-control: no-store')" 1 "GET /api/comments is no-store"
 # X-Store-Path names which path through the derived state document a request
@@ -73,6 +90,10 @@ BLOB_BACKED=$(curl -s -D - -o /dev/null -b "$TMP/team.jar" -K "$TMP/team.conf" "
 TID=$(curl -s -D "$TMP/create.h" -b "$TMP/team.jar" -K "$TMP/team.conf" -H 'Content-Type: application/json' \
   -d '{"action":"create","text":"smoke (designer)","screen":"smoke","screenLabel":"smoke","anchor":{"path":"body"}}' \
   "$API" | jq_ 'print(d.get("thread",{}).get("id",""))')
+V1=$V0
+for _ in $(seq 1 30); do V1=$(ask_v); [ -n "$V1" ] && [ "$V1" != "$V0" ] && break; sleep 0.2; done
+check "$([ -n "$V1" ] && [ "$V1" != "$V0" ] && echo moved)" moved "a write moves the version within 6 s"
+
 if [ "$BLOB_BACKED" = 1 ]; then
   check "$(grep -i '^x-store-path:' "$TMP/create.h" | tr -d '\r' | awk '{print $2}')" patch "create took the fast path (no rebuild, no list)"
 else

@@ -138,6 +138,16 @@ check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments?room=pr-9")" 4
 check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments")" 401 "nor the default room"
 check "$(code -H "Authorization: Bearer $TEAM_R" "$D/api/comments?room=pr-7")" 200 "and still opens its own"
 
+# "Has anything changed?" (template/lib/changes.js): no session, per room,
+# and every post in that room moves it.
+ask_v() { curl -s "$D/api/version${1:+?room=$1}" | jq_ 'print(d.get("v",""))'; }
+V0=$(ask_v pr-7)
+check "$([ -n "$V0" ] && echo answered)" answered "GET /api/version answers without a session"
+check "$(curl -s -D - -o /dev/null "$D/api/version?room=pr-7" | tr -d '\r' | grep -ci '^access-control-allow-origin: \*$')" 1 "…for any page"
+check "$(api "$TEAM_R" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("changes"), d.get("ver"))')" "/api/version $V0" "GET carries where to ask and the version it read"
+api "$TEAM_R" -o /dev/null -d '{"action":"create","text":"version","screen":"Home","screenLabel":"Home"}' "$D/api/comments?room=pr-7"
+check "$([ "$(ask_v pr-7)" != "$V0" ] && echo moved)" moved "a post moves the room's version"
+
 # A room can be moved in: verbatim, designer-only, and idempotent.
 IMP='{"action":"import","threads":[{"id":"66666666-6666-4666-8666-666666666666","createdAt":1000,"authorRole":"client","author":"Olena","screen":"Home","screenLabel":"Home","n":1,"messages":[{"author":"Olena","role":"client","text":"moved in","at":1000}]}]}'
 check "$(api "$TEAM_R" -d "$IMP" "$D/api/comments?room=pr-7" | jq_ 'print(d.get("imported"))')" "1" "a room can be moved in"

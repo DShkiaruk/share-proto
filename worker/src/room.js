@@ -22,6 +22,7 @@ import {
 import { applyShot, applyMapMeta, applyVersionEvent, labelKey } from '../../template/lib/state.js';
 import { parseImages, parseImageDataUrl } from '../../template/lib/media.js';
 import { sanitizeImport, importFile, mergeImport } from '../../template/lib/importing.js';
+import { CHANGES_PATH } from '../../template/lib/changes.js';
 
 const MAX_TEXT = 3000;
 const NAV_CAP = 500;
@@ -44,6 +45,15 @@ export class Room {
     this.s = storage;
     this.mediaBudget = mediaBudget;
     this.loaded = false;
+    // The room's version for "has anything changed?" (lib/changes.js): a
+    // count of posts, tagged with this instance's start — an evicted and
+    // restarted room reads as changed once, which costs one read.
+    this.boot = Date.now().toString(36);
+    this.writes = 0;
+  }
+
+  version() {
+    return `${this.boot}.${this.writes}`;
   }
 
   async load() {
@@ -185,6 +195,8 @@ export class Room {
     }
     return {
       v: 2,
+      ver: this.version(),
+      changes: CHANGES_PATH,
       role,
       name: author,
       nav,
@@ -220,7 +232,17 @@ export class Room {
 
   /* ---------- writes ---------- */
 
+  // Any post may change the room, so every one moves the version — a refused
+  // one too, which costs a reader one read and keeps this rule simple.
   async post(role, author, body) {
+    try {
+      return await this.apply(role, author, body);
+    } finally {
+      this.writes++;
+    }
+  }
+
+  async apply(role, author, body) {
     await this.load();
     const action = body.action;
     const now = Date.now();

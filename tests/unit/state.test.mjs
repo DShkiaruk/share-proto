@@ -259,3 +259,23 @@ test('a room with its own passwords is not opened by the deployment-wide pair', 
   assert.equal(roleFor('', broken), null);
   assert.equal(roleFor(undefined, { designer: null, client: null }), null);
 });
+
+// Every write of a room's document must reach onWrite, so the cached answer to
+// "has anything changed?" is dropped (template/lib/changes.js) — and a failing
+// onWrite must not undo or fail the write itself.
+test('onWrite runs after every document write, with the room, and cannot break one', async () => {
+  const storage = fakeStorage({ doc: { v: 2, threads: [], nav: {} }, conflicts: 1 });
+  const roots = [];
+  const store = createStateStore(storage, { onWrite: (root) => roots.push(root) });
+  await store.mutate('rooms/pr-7/', () => ({ threads: [newThread] }));
+  assert.deepEqual(roots, ['rooms/pr-7/'], 'once, after the write that landed, not for the conflict');
+  await store.forceRebuild('');
+  assert.deepEqual(roots, ['rooms/pr-7/', '']);
+  const failing = createStateStore(fakeStorage({ doc: { v: 2, threads: [], nav: {} } }), {
+    onWrite: () => {
+      throw new Error('purge down');
+    },
+  });
+  const { path } = await failing.mutate('', () => ({ threads: [newThread] }));
+  assert.equal(path, 'patch');
+});

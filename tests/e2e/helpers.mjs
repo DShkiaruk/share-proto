@@ -69,3 +69,17 @@ export async function openList(page) {
   await page.waitForFunction(() => window.__fp?.state.sidebar === true);
   await settledBox(inOverlay(page, '.sidebar'));
 }
+
+// A comments server from before "has anything changed?" (template/lib/
+// changes.js): its GET carries neither `changes` nor `ver`, so the overlay
+// polls by reading in full. Installs the route; call before login.
+export async function asOlderServer(page) {
+  await page.route('**/api/comments*', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch();
+    const json = await response.json();
+    delete json.changes;
+    delete json.ver;
+    await route.fulfill({ response, json });
+  });
+}

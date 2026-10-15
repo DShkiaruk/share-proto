@@ -15,6 +15,7 @@ import { createToken, sessionFromHeaders, sessionAllowsRoom, roomPasswords, role
 import { originAllowed, ROOM_RE } from '../../template/lib/cors.js';
 import { clean } from '../../template/lib/threads.js';
 import { Room } from './room.js';
+import { CHANGES_PATH, VERSION_HEADERS } from '../../template/lib/changes.js';
 
 const MAX_NAME = 40;
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
@@ -73,6 +74,8 @@ export class CommentsRoom extends DurableObject {
     const url = new URL(request.url);
     const role = request.headers.get('X-Fp-Role') === 'designer' ? 'designer' : 'client';
     const author = decodeURIComponent(request.headers.get('X-Fp-Author') || '');
+
+    if (url.pathname === CHANGES_PATH) return new Response(JSON.stringify({ v: this.room.version() }), { headers: VERSION_HEADERS });
 
     if (url.pathname === '/api/file') {
       const res = await this.run(() => this.room.file(role, url.searchParams.get('p') || ''));
@@ -185,6 +188,17 @@ export default {
         env.SESSION_SECRET
       );
       return json(200, { role, token }, cors);
+    }
+
+    // No session: the same answer for every reader (lib/changes.js). Every
+    // ask is a request to the room; that is what a poll cost before, minus
+    // the read of the whole room.
+    if (url.pathname === CHANGES_PATH) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json(405, { error: 'Method not allowed' }, cors);
+      const asked = (url.searchParams.get('room') || '').toLowerCase();
+      const stub = env.ROOM.getByName(ROOM_RE.test(asked) ? asked : '_');
+      const res = await stub.fetch(new Request(url.toString(), { method: 'GET' }));
+      return new Response(res.body, { status: res.status, headers: VERSION_HEADERS });
     }
 
     if (url.pathname === '/api/comments' || url.pathname === '/api/file') {

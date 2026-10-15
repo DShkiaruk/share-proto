@@ -127,6 +127,59 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.9.0 — 2026-10-16
+
+**Someone else's comment shows on your next click, and an open tab no longer
+spends the free storage reads.** Until now an open tab read the whole room
+every 25 s, slowing to every 4 minutes when nothing happened. A reply could
+take that long to appear, and each read came out of the account-wide free Blob
+allowance (10,000 simple operations a month). If every read counts, one tab
+left open eight hours a day uses that up in about nine working days.
+
+- A tab now asks `/api/version` whether anything changed. It asks every 15 s
+  while someone is at the page, every 2 minutes after three quiet minutes, and
+  on a click (at most once per 3 s). It reads the room only when the answer
+  differs from the version of its last read.
+- On Vercel the answer is cached on the CDN under the room's tag
+  (`Vercel-CDN-Cache-Control`, `Vercel-Cache-Tag`). Every write to the room's
+  document drops it (`dangerouslyDeleteByTag`, from a new `onWrite` hook in the
+  state store). A cached answer runs no function and reads no storage. An
+  uncached one reads the document's ETag without downloading it.
+- Measured on a test project: cached answers in ~45 ms, a dropped answer gone
+  in 0.4–0.9 s. For 1–2 s after a write, different CDN nodes can disagree;
+  that costs an extra read, never a missed one. The cache expires after
+  10 minutes anyway, which bounds a rare race between a write and an answer
+  computed just before it.
+- The local server answers from a count of its writes, the Cloudflare room
+  from a count of its posts. Both carry the same `ver` and `changes` fields on
+  GET as Vercel; the parity tests hold all three to it.
+- The answer is the same for everyone and needs no session. It says only that
+  a room changed, never what.
+- A server without `/api/version` (an install not yet updated) is read the old
+  way. So is one whose endpoint fails three times in a row; each failed ask
+  reads in full, so nothing is missed meanwhile.
+- Fixed in the copy taken in turns (v2.8.2). The screenshot library adds its
+  own hidden 0×0 frame to `<body>`, and the copy picked it up. That frame's
+  document is copied by another path through the library, so the overlay lost
+  track of which elements were being copied. From then on any removal (a chart
+  redrawing) counted as damage and forced the one-go copy. Seen only under
+  load. The frame is now skipped. A canvas, which comes out as a picture of
+  itself, is no longer read as a mismatch either. The chart test now asserts
+  the walk was followed throughout, and fails if the frame is copied again.
+- New dependency on Vercel: `@vercel/functions` (in `template/package.json`;
+  `update.py` brings it along).
+- Tests:
+  - `budget.spec`: asking costs no read until something changes; a change is
+    read once; a burst of clicks asks once; someone else's comment shows on
+    the next click; a failing endpoint is given up. Each was checked against
+    the breakage it guards.
+  - The older-server pace tests now run against a server stripped of the
+    endpoint.
+  - Unit: the room's version, the local endpoint end to end, the write hook,
+    and that all three editions are in step.
+  - Both smoke scripts ask, write, and see the version move. On Vercel,
+    `smoke.sh` also checks that a repeated ask is a CDN `HIT`.
+
 ## v2.8.2 — 2026-10-15
 
 **No pause after leaving a comment, even on a slow machine.** The comment's

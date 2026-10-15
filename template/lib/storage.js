@@ -1,4 +1,4 @@
-import { list, put, get, del, BlobPreconditionFailedError } from '@vercel/blob';
+import { list, put, get, head, del, BlobPreconditionFailedError, BlobNotFoundError } from '@vercel/blob';
 
 /* Blob adapter (private store only). Two kinds of objects live in the store:
    - events (append-only, unique pathnames)         → appendEvent / readEvents
@@ -52,6 +52,19 @@ export async function readJson(pathname) {
     data = null; // corrupt document → the caller rebuilds it
   }
   return { data, etag };
+}
+
+// A document's ETag without downloading it — what "has anything changed?"
+// compares (lib/changes.js). Same value, normalized the same way, as the
+// readJson above returns. Missing → null; any other failure propagates.
+export async function headEtag(pathname) {
+  try {
+    const r = await head(pathname);
+    return normalizeEtag(r?.etag);
+  } catch (e) {
+    if (e instanceof BlobNotFoundError) return null;
+    throw e;
+  }
 }
 
 // Conditional document write. ifMatch: only if the blob still has that ETag.
