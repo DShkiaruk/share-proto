@@ -5,7 +5,9 @@ import { spawn } from 'node:child_process';
 import { rmSync, appendFileSync, existsSync } from 'node:fs';
 const V = new URL('.', import.meta.url).pathname;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const PORT = { old: { heavy: 4611, report: 4612, app: 4613 }, new: { heavy: 4621, report: 4622, app: 4623 } };
+const PORT = { old: { heavy: 4611, report: 4612, app: 4613 }, new: { heavy: 4621, report: 4622, app: 4623 }, next: { heavy: 4631, report: 4632, app: 4633 } };
+// Which builds to compare: site-<version>-<page>. `next` is any third build.
+const VERSIONS = (process.env.VERSIONS || 'old,new').split(',');
 const sr = (page, sel) => page.locator(`[data-fp-host] >> ${sel}`);
 async function run(v, p, phone, rep) {
   if (!existsSync(`${V}site-${v}-${p}`)) return;
@@ -50,8 +52,8 @@ async function run(v, p, phone, rep) {
     await page.waitForTimeout(1500);
     const g = await page.evaluate(() => { clearInterval(window.__hb); return window.__gaps; });
     const o = { test: phone ? 'webkit-iphone' : 'webkit-desk', v, p, rep, shownMs: shown, previewMs: preview, longestStuckMs: Math.round(Math.max(...g) - 16), stuckOver100ms: Math.round(g.filter((x) => x > 100).reduce((a, x) => a + x, 0)) };
-    console.log(JSON.stringify(o)); appendFileSync(V + 'results.jsonl', JSON.stringify({ at: new Date().toISOString(), ...o }) + '\n');
+    console.log(JSON.stringify(o)); appendFileSync(V + (process.env.RESULTS || 'results.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...o }) + '\n');
   } catch (e) { console.log(v, p, 'error', String(e).slice(0, 200)); }
   finally { await browser.close(); proc.kill(); }
 }
-for (let rep = 1; rep <= 2; rep++) for (const v of ['old', 'new']) for (const p of ['heavy', 'report']) { await run(v, p, false, rep); await run(v, p, true, rep); }
+for (let rep = 1; rep <= 2; rep++) for (const v of VERSIONS) for (const p of ['heavy', 'report']) { await run(v, p, false, rep); await run(v, p, true, rep); }

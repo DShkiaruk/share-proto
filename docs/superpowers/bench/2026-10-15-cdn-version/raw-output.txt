@@ -1,0 +1,17 @@
+# node probe.mjs — 2026-10-15 ~20:25 UTC, from Kyiv (edge arn1), project deployed to sp-cache-probe.vercel.app (since removed)
+plain then with cookie: MISS/690ms/93983  HIT/42ms/93983  HIT/46ms/93983  HIT/44ms/93983  HIT/216ms/93983  HIT/353ms/93983  HIT/208ms/93983 edge arn1
+purge 1: bump answered in 247 ms (purge call 45 ms); new version seen 928 ms after bump; reads until then: 3 [HIT,REVALIDATED]; next reads HIT,HIT,HIT
+purge 2: bump answered in 195 ms (purge call 5 ms); new version seen 471 ms after bump; reads until then: 1 [REVALIDATED]; next reads REVALIDATED,REVALIDATED,REVALIDATED
+purge 3: bump answered in 225 ms (purge call 5 ms); new version seen 752 ms after bump; reads until then: 3 [HIT,REVALIDATED]; next reads REVALIDATED,REVALIDATED,REVALIDATED
+purge 4: bump answered in 191 ms (purge call 7 ms); new version seen 636 ms after bump; reads until then: 2 [HIT,REVALIDATED]; next reads REVALIDATED,REVALIDATED,REVALIDATED
+purge 5: bump answered in 186 ms (purge call 4 ms); new version seen 525 ms after bump; reads until then: 2 [HIT,REVALIDATED]; next reads HIT,HIT,HIT
+purge 6: bump answered in 178 ms (purge call 5 ms); new version seen 597 ms after bump; reads until then: 3 [HIT]; next reads HIT,HIT,REVALIDATED
+purge 7: bump answered in 180 ms (purge call 5 ms); new version seen 356 ms after bump; reads until then: 1 [REVALIDATED]; next reads REVALIDATED,REVALIDATED,HIT
+purge 8: bump answered in 186 ms (purge call 6 ms); new version seen 560 ms after bump; reads until then: 2 [HIT,REVALIDATED]; next reads REVALIDATED,REVALIDATED,REVALIDATED
+seen-after ms: 928, 471, 752, 636, 525, 597, 356, 560
+
+# node probe2.mjs — right after; each read is <x-vercel-cache>:<last 5 digits of the version>
+after purge 1: REVALIDATED:31090 REVALIDATED:31523 REVALIDATED:31952 HIT:31952 HIT:31952 REVALIDATED:33027 HIT:33027 REVALIDATED:33799 HIT:33799 HIT:31952 HIT:33799 HIT:33799 HIT:33799 HIT:33027 HIT:33027 HIT:33799
+after purge 2: HIT:33799 HIT:33799 HIT:33799 HIT:33799 REVALIDATED:41206 HIT:33799 HIT:33799 HIT:41206 HIT:41206 HIT:41206 HIT:41206 HIT:41206 HIT:41206 HIT:41206 HIT:41206 HIT:41206
+after purge 3: HIT:41206 REVALIDATED:48701 REVALIDATED:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118
+quiet: HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118 HIT:49118

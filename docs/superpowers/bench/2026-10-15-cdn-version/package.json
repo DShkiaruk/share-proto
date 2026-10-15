@@ -1,0 +1,1 @@
+{ "name": "sp-cache-probe", "private": true, "type": "module", "dependencies": { "@vercel/functions": "3.10.1" } }

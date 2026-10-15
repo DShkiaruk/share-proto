@@ -10,7 +10,7 @@ for (const k of ['LAB_URL', 'LAB_TEAM', 'LAB_CLIENT']) if (!process.env[k]) thro
 const BASE = process.env.LAB_URL.replace(/\/$/, '');
 const TEAM = process.env.LAB_TEAM;
 const CLIENT = process.env.LAB_CLIENT;
-const OUT = new URL('results.jsonl', import.meta.url).pathname;
+const OUT = new URL(process.env.RESULTS || 'results.jsonl', import.meta.url).pathname;
 const record = (o) => { console.log(JSON.stringify(o)); appendFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), test: 'live', ...o }) + '\n'); };
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 12);
 const sr = (page, sel) => page.locator(`[data-fp-host] >> ${sel}`);

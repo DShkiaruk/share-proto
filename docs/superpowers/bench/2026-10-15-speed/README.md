@@ -141,3 +141,90 @@ overlay.js same as this checkout; overlay.css same as this checkout.
 - **Not solved**: on the heavy page with a 4× slower CPU the picture still
   costs one 1.3 s freeze. The app page gained little (0.99 s → 0.78 s at 4×):
   its cost is not in the part v2.7 changed.
+
+---
+
+## v2.8.2 — copying the page in turns
+
+**What changed.** The profile of the remaining freeze (heavy page, 4× slower CPU)
+showed a single 1.6 s task. All of it was the screenshot library copying
+computed styles node by node, in one unbroken run of promise callbacks. The
+real app prototype showed the same pattern at 1.3 s.
+
+The library waits on its `onCloneEachNode` hook after each node it copies. The
+overlay now uses that wait to give the event loop a turn every 12 ms.
+
+The library walks siblings by `nextSibling`, so removing an element that is
+being copied would cut the walk short and leave holes in the picture. The
+overlay tracks which elements are being copied: the filter sees each one go
+in, the hook sees it come out. If one of them is removed, the copy is redone
+in one go, as before. SVG subtrees are copied without a break, because the
+real app redraws an SVG every 16 ms.
+
+**Pictures.** Compared pixel by pixel against the one-go copy. Pictures are in
+the scratchpad and not committed, since they show client pages.
+
+- heavy, at rest: 0.002% of pixels differ (the spinner had turned).
+- heavy, scrolled: identical.
+- report: identical.
+- app: identical.
+- a list rebuilt every 150 ms: the copy was redone in one go, as intended.
+  0.005% of pixels differ (the countdowns).
+
+**Numbers.** `new` = v2 at d4cc415, `next` = the copy in turns, run
+alternately. Raw rows are in `results-turns.jsonl`:
+
+```bash
+RESULTS=results-turns.jsonl VERSIONS=new,next node bench.mjs post 3
+RESULTS=results-turns.jsonl VERSIONS=new,next node webkit.mjs
+RESULTS=results-turns.jsonl node summary.mjs --skip 20:16:00-20:22:00
+```
+
+The 36 rows from 20:16–20:22 UTC are a first attempt that treated *any*
+removal as damage. They are kept in the file and left out of the tables.
+
+### Leaving a comment (Chromium)
+
+| page | CPU | version | n | comment drawn | longest freeze | freezes in all | extra work | picture saved |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| heavy | 1× | new | 3 | 0.02 s | 0.31 s | 0.31 s | 0.4 s | 0.54 s |
+| heavy | 1× | next | 3 | 0.03 s | 0.06 s | 0.06 s | 0.4 s | 0.54 s |
+| heavy | 4× | new | 3 | 0.05 s | 1.4 s | 1.4 s | 1.5 s | 1.6 s |
+| heavy | 4× | next | 3 | 0.05 s | 0.24 s | 0.30 s | 1.8 s | 1.9 s |
+| report | 1× | new | 3 | 0.03 s | 0.07 s | 0.07 s | 0.1 s | 0.54 s |
+| report | 1× | next | 3 | 0.03 s | 0.00 s | 0.00 s | 0.1 s | 0.54 s |
+| report | 4× | new | 3 | 0.03 s | 0.18 s | 0.24 s | 0.3 s | 0.80 s |
+| report | 4× | next | 3 | 0.07 s | 0.18 s | 0.50 s | 0.5 s | 0.84 s |
+| app | 1× | new | 3 | 0.03 s | 0.19 s | 0.27 s | 0.3 s | 0.79 s |
+| app | 1× | next | 3 | 0.03 s | 0.08 s | 0.08 s | 0.4 s | 0.81 s |
+| app | 4× | new | 3 | 0.03 s | 0.82 s | 1.2 s | 1.2 s | 1.6 s |
+| app | 4× | next | 3 | 0.04 s | 0.33 s | 0.64 s | 1.3 s | 1.8 s |
+
+
+### Safari’s engine (WebKit), leaving a comment
+
+| page | screen | version | n | longest stuck | stuck in all (gaps > 100 ms) | picture saved |
+| --- | --- | --- | --- | --- | --- | --- |
+| heavy | desktop | new | 2 | 0.29 s | 0.30 s | 0.45 s |
+| heavy | desktop | next | 2 | 0.11 s | 0.10 s | 0.80 s |
+| heavy | iPhone | new | 2 | 0.24 s | 0.26 s | 0.67 s |
+| heavy | iPhone | next | 2 | 0.04 s | 0.00 s | 0.68 s |
+| report | desktop | new | 2 | 0.07 s | 0.05 s | 0.68 s |
+| report | desktop | next | 2 | 0.15 s | 0.32 s | 1.1 s |
+| report | iPhone | new | 2 | 0.11 s | 0.15 s | 1.0 s |
+| report | iPhone | next | 2 | 0.03 s | 0.00 s | 0.89 s |
+
+**What it says.**
+
+- **Big gains where the freeze was big.** At 4× CPU the longest freeze went
+  from 1.4 s to 0.24 s on the heavy page and from 0.82 s to 0.33 s on the app.
+  At normal speed every page is at 0.08 s or less.
+- **No gain on the report**, which was already under 0.2 s. At 4× CPU its
+  short freezes add up to more than before (0.24 s → 0.50 s in total).
+- **Costs.** Total work is up a little (heavy, 4×: 1.5 s → 1.8 s), and the
+  picture is saved a little later (1.6 s → 1.9 s).
+- **Safari's engine:** heavy page 0.29 s → 0.11 s on desktop and 0.24 s →
+  0.04 s on an iPhone. The report on desktop got slightly worse, 0.07 s →
+  0.15 s (n = 2).
+- **What is left** are steps that cannot be split: turning the copy into an
+  image and drawing it, 0.2–0.3 s on a 4× slower CPU.

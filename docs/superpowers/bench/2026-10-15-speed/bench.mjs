@@ -13,9 +13,11 @@ import { spawn } from 'node:child_process';
 import { rmSync, appendFileSync, existsSync } from 'node:fs';
 
 const V = new URL('.', import.meta.url).pathname;
-const OUT = V + 'results.jsonl';
+const OUT = V + (process.env.RESULTS || 'results.jsonl');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const PORT = { old: { heavy: 4611, report: 4612, app: 4613 }, new: { heavy: 4621, report: 4622, app: 4623 } };
+const PORT = { old: { heavy: 4611, report: 4612, app: 4613 }, new: { heavy: 4621, report: 4622, app: 4623 }, next: { heavy: 4631, report: 4632, app: 4633 } };
+// Which builds to compare: site-<version>-<page>. `next` is any third build.
+const VERSIONS = (process.env.VERSIONS || 'old,new').split(',');
 const POINT = { heavy: { x: 700, y: 420 }, report: { x: 700, y: 380 }, app: { x: 700, y: 380 } };
 const record = (o) => {
   console.log(JSON.stringify(o));
@@ -301,7 +303,7 @@ async function scroll(v, rep, phone = false) {
 const [what, repsArg] = process.argv.slice(2);
 const reps = Number(repsArg || 3);
 for (let rep = 1; rep <= reps; rep++) {
-  for (const v of ['old', 'new']) {
+  for (const v of VERSIONS) {
     if (what === 'post') for (const p of ['heavy', 'report', 'app']) for (const rate of [1, 4]) await post(v, p, rate, rep);
     if (what === 'post1') for (const p of process.argv.slice(4)) await post(v, p, 1, rep);
     if (what === 'slowread') for (const p of ['heavy', 'app']) await slowread(v, p, rep);

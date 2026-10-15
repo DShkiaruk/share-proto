@@ -127,6 +127,36 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.8.2 — 2026-10-15
+
+**No pause after leaving a comment, even on a slow machine.** The comment's
+picture used to be copied in one unbroken run. On a 600-row page with a 4×
+slower CPU, the page answered nothing for 1.4 s; on a real app prototype, for
+0.8 s. Now the copy gives the page a turn every 12 ms: those two drop to
+0.24 s and 0.33 s, and at normal speed every measured page stays under 0.1 s.
+The pictures came out the same on all four pages tried: identical, except
+0.002% of pixels on one page, where a spinner had turned.
+
+- A page that removes an element while that element is being copied would
+  leave holes in the picture (the library walks siblings one by one). The
+  overlay tracks which elements are being copied; if one of them is removed,
+  the picture is taken again in one go, as before. An SVG is always copied
+  without a break, so a chart that redraws every frame does not force that.
+- What is left are the steps that cannot be split, 0.2–0.3 s on the slow CPU.
+  Total work is up a little; the picture arrives ~0.3 s later.
+- Tests: the freeze limit for the heavy page is now 0.25 s (it was 1 s). Two
+  more cases: a chart redrawn every frame, and a list rebuilt during the copy.
+  Each is checked against the version it is meant to catch.
+- `scripts/smoke.sh` and `worker-smoke.sh` used comment number 9001 for their
+  import check. The counter remembers the highest number ever used, deletions
+  included, so every real comment on a smoke-tested deployment was numbered
+  9002 and up. The check now imports number 1. A deployment that was already
+  smoke-tested keeps its high numbers.
+- Measured: `docs/superpowers/bench/2026-10-15-speed/` (section v2.8.2).
+- Checked, not built: a CDN-cached "has anything changed?" endpoint. It would
+  let the overlay check after a click, or every few seconds, without a Blob
+  read each time — see `docs/superpowers/bench/2026-10-15-cdn-version/`.
+
 ## v2.8.1 — 2026-10-15
 
 **The comment news at the start of a Claude session is switched off.** In use
