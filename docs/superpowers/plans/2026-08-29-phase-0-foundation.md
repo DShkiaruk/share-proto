@@ -494,7 +494,7 @@ check "$(code "$D/api/file?p=previews/x/y.jpg")" 401 "GET /api/file without cook
 
 - [ ] **Step 2: Run it against the live FilePig deployment (read-only except one smoke thread that the script deletes)**
 
-Run: `bash scripts/smoke.sh https://filepig-prototype-sigma.vercel.app oink-crew-376a oink-view-4753`
+Run: `bash scripts/smoke.sh https://filepig-prototype-sigma.vercel.app <team password> <client password>`
 Expected: every line `ok` **except** the last (`/api/file` does not exist yet → 404, not 401) → `SMOKE FAILED`. That single failure is the pending Task 8. If anything else fails, stop: the script or the deployment is wrong.
 
 - [ ] **Step 3: Replace SKILL.md step 6 body**
@@ -1145,7 +1145,7 @@ node --check template/api/file.js && git add template/api/file.js template/verce
 
 ```bash
 S=/private/tmp/claude-501/-Users-dimaskliaruk/80df2e2c-ec54-4aa7-8bd9-4a7970d043b4/scratchpad
-curl -s -c $S/live.jar -H 'Content-Type: application/json' -d '{"password":"oink-crew-376a","name":"Dmytro (export)"}' https://filepig-prototype-sigma.vercel.app/api/login
+curl -s -c $S/live.jar -H 'Content-Type: application/json' -d '{"password":"<team password>","name":"Dmytro (export)"}' https://filepig-prototype-sigma.vercel.app/api/login
 curl -s -b $S/live.jar https://filepig-prototype-sigma.vercel.app/api/comments > $S/filepig-export.json
 python3 -c "import json; d=json.load(open('$S/filepig-export.json')); print(len(d['threads']), 'threads', len(d['nav']), 'edges')"
 ```
