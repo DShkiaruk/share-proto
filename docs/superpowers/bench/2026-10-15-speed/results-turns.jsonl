@@ -86,3 +86,12 @@
 {"at":"2026-10-15T20:32:22.053Z","test":"webkit-iphone","v":"next","p":"heavy","rep":2,"shownMs":256,"previewMs":673,"longestStuckMs":38,"stuckOver100ms":0}
 {"at":"2026-10-15T20:32:30.969Z","test":"webkit-desk","v":"next","p":"report","rep":2,"shownMs":80,"previewMs":1308,"longestStuckMs":243,"stuckOver100ms":633}
 {"at":"2026-10-15T20:32:41.381Z","test":"webkit-iphone","v":"next","p":"report","rep":2,"shownMs":259,"previewMs":895,"longestStuckMs":29,"stuckOver100ms":0}
+{"at":"2026-10-15T20:41:23.121Z","test":"live","file":"overlay.js","same":true,"live":"be09bd5910db","here":"be09bd5910db"}
+{"at":"2026-10-15T20:41:23.231Z","test":"live","file":"overlay.css","same":true,"live":"91db2e7885c8","here":"91db2e7885c8"}
+{"at":"2026-10-15T20:41:48.004Z","test":"live","rep":1,"savedMs":508,"drawnMs":513,"previewMs":2378,"longestFreezeMs":74,"designerSeesAfterKeyMs":10874}
+{"at":"2026-10-15T20:42:13.387Z","test":"live","rep":2,"savedMs":622,"drawnMs":631,"previewMs":2346,"longestFreezeMs":81,"designerSeesAfterKeyMs":12651}
+{"at":"2026-10-15T20:42:38.757Z","test":"live","rep":3,"savedMs":484,"drawnMs":496,"previewMs":1940,"longestFreezeMs":76,"designerSeesAfterKeyMs":12708}
+{"at":"2026-10-15T20:42:39.490Z","test":"live","deleted":"e8cc1699-9ac7-445f-ab59-37cae332a48a","r":"ok"}
+{"at":"2026-10-15T20:42:40.219Z","test":"live","deleted":"06a33cbf-d075-4a87-8fe3-94b003befefb","r":"ok"}
+{"at":"2026-10-15T20:42:40.892Z","test":"live","deleted":"6924b7a8-2005-421d-9715-7bd55eee23b3","r":"ok"}
+{"at":"2026-10-15T20:42:41.113Z","test":"live","leftOver":0}
