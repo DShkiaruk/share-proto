@@ -1033,13 +1033,22 @@
      two heavy ones went from 2.7 s to 0.4 s and from 31 s to 0.5 s, the two
      light ones stayed at a few hundred milliseconds. */
   const MEDIA_TAGS = /^(img|picture|video|iframe|canvas|svg)$/i;
-  function viewportOnly() {
+  // The view as it was when the picture was asked for. The copy is spread
+  // over many turns (see snapViewport), and a reviewer who scrolls meanwhile
+  // must not move what counts as "in view" halfway through it.
+  function viewportOnly(at = { x: scrollX, y: scrollY }) {
     const vw = innerWidth;
     const vh = innerHeight;
     const outside = new WeakMap();
+    const rect = (n) => {
+      const r = n.getBoundingClientRect();
+      const dx = scrollX - at.x;
+      const dy = scrollY - at.y;
+      return { width: r.width, height: r.height, top: r.top + dy, bottom: r.bottom + dy, left: r.left + dx, right: r.right + dx };
+    };
     const isOutside = (n) => {
       if (outside.has(n)) return outside.get(n);
-      const r = n.getBoundingClientRect();
+      const r = rect(n);
       // No size at all (display: contents, an empty wrapper) says nothing
       // about where its children are.
       const out = r.width || r.height ? r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw : false;
@@ -1052,10 +1061,76 @@
       if (!p || p === document.documentElement || p === document.body) return true;
       if (isOutside(p)) return n.nodeType === 1 && /fixed|sticky/.test(getComputedStyle(n).position);
       if (n.nodeType === 1 && MEDIA_TAGS.test(n.tagName)) {
-        const r = n.getBoundingClientRect();
+        const r = rect(n);
         if (r.top > vh || r.left > vw) return false;
       }
       return true;
+    };
+  }
+
+  /* The copy is one long run of promise callbacks: with nothing in between,
+     the page cannot answer a click or a scroll until it ends — 1.3 s both on
+     a 600-row page and on a real app prototype, with a 4x slower CPU. After
+     each node it copies, the library waits on onCloneEachNode; every slice of
+     work, that wait is a real turn of the event loop, and the page gets it.
+
+     What the page does in those turns mostly cannot hurt the copy: a part
+     not reached yet is copied as it is then, a part already copied is done.
+     The one thing that can: the library walks siblings by nextSibling, so an
+     element taken out while it — or anything around it — is being copied
+     ends that walk, and the rest of its siblings are missing from the
+     picture. So the elements being copied are tracked (the filter sees each
+     one go in, onCloneEachNode sees it come out), and removing one of those
+     ends the attempt: it is redone in one go, as before. A chart that redraws
+     every frame (a real prototype removes SVG groups every 16 ms) is copied
+     whole within one turn, never across two. Should the walk ever not match
+     (an iframe's document, copied by another path), any removal at all ends
+     the attempt. Text that changes is harmless either way. */
+  const SLICE_MS = 12;
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const STALE_COPY = new Error('the page changed during the copy');
+  const nextTurn = () =>
+    window.scheduler?.yield
+      ? window.scheduler.yield()
+      : new Promise((r) => {
+          const ch = new MessageChannel();
+          ch.port1.onmessage = () => r();
+          ch.port2.postMessage(0);
+        });
+  function inTurns() {
+    const open = [];
+    const isOpen = new Set();
+    let inSvg = 0;
+    let lost = false;
+    let changed = false;
+    const mo = new MutationObserver((records) => {
+      for (const m of records) for (const n of m.removedNodes) if (n.nodeType === 1 && (lost || isOpen.has(n))) changed = true;
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    let since = performance.now();
+    return {
+      enter: (n) => {
+        if (n.nodeType === 3) return; // text is copied at once, no hook after it
+        open.push(n);
+        isOpen.add(n);
+        if (n.namespaceURI === SVG_NS) inSvg++;
+      },
+      each: (clone) => {
+        const top = open.pop(); // nothing for the root, which no filter saw
+        if (top) {
+          isOpen.delete(top);
+          if (top.namespaceURI === SVG_NS) inSvg--;
+          // a video comes out as its frame; anything else must match
+          if (top.nodeName !== clone.nodeName && top.nodeName !== 'VIDEO') lost = true;
+        }
+        if (changed) return Promise.reject(STALE_COPY);
+        if (inSvg || performance.now() - since < SLICE_MS) return undefined;
+        return nextTurn().then(() => {
+          since = performance.now();
+          if (changed) throw STALE_COPY;
+        });
+      },
+      stop: () => mo.disconnect(),
     };
   }
 
@@ -1071,22 +1146,38 @@
       // ones below it, which never will — a report full of screenshots spent
       // the whole budget here and never got its picture. So the wait is short,
       // and fetching the pictures that are in view gets the full budget back.
-      const job = await lib.createContext(document.documentElement, {
-        scale,
-        width: innerWidth,
-        height: innerHeight,
-        timeout: 300,
-        filter: viewportOnly(),
-        style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
-      });
-      job.timeout = 4000;
-      // A capture that loses the race still finishes; only then is its
-      // context (a sandbox frame) safe to take down.
-      const work = lib.domToCanvas(job).finally(() => lib.destroyContext(job));
-      const full = await Promise.race([
-        work,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
-      ]);
+      const at = { x: scrollX, y: scrollY };
+      const copy = async (turns) => {
+        const inView = viewportOnly(at);
+        const job = await lib.createContext(document.documentElement, {
+          scale,
+          width: innerWidth,
+          height: innerHeight,
+          timeout: 300,
+          filter: (n) => {
+            const keep = inView(n);
+            if (keep) turns?.enter(n);
+            return keep;
+          },
+          style: { transform: `translate(${-at.x}px, ${-at.y}px)` },
+          onCloneEachNode: turns?.each,
+        });
+        job.timeout = 4000;
+        // A capture that loses the race still finishes; only then is its
+        // context (a sandbox frame) safe to take down.
+        const work = lib.domToCanvas(job).finally(() => {
+          turns?.stop();
+          lib.destroyContext(job);
+        });
+        return Promise.race([work, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
+      };
+      let full;
+      try {
+        full = await copy(inTurns());
+      } catch (e) {
+        if (e !== STALE_COPY) throw e;
+        full = await copy(null);
+      }
       const c = document.createElement('canvas');
       c.width = Math.round(innerWidth * scale);
       c.height = Math.round(innerHeight * scale);

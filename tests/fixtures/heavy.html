@@ -31,7 +31,10 @@
                   instead of changing only the countdown text (React-style)
        ?pics=N    N lazy pictures below the list — a report full of
                   screenshots, whose pictures never load until scrolled to
-       ?short=1   no full-height shell: below the content is bare page -->
+       ?short=1   no full-height shell: below the content is bare page
+       ?chart=1   a small chart in view whose groups are taken out and put
+                  back every animation frame, the way a real prototype's
+                  animated SVG does -->
 <div id="root"></div>
 <script>
   const q = new URLSearchParams(location.search);
@@ -39,6 +42,7 @@
   const TICK = Number(q.get('tick') || 1000);
   const PICS = Number(q.get('pics') || 0);
   const SHORT = q.has('short');
+  const CHART = q.has('chart');
   const REDRAW = q.has('redraw');
   const screens = { tickets: 'Tickets', dashboard: 'Dashboard', settings: 'Settings' };
   const start = Date.now();
@@ -67,12 +71,36 @@
         <main>
           <h1>${screens[r] || 'Tickets'}</h1>
           <p><span class="spin"></span> Live</p>
+          ${CHART ? '<svg id="chart" width="300" height="60" viewBox="0 0 300 60"></svg>' : ''}
           ${r === 'tickets' ? `<div class="list">${rows()}</div>${pics()}` : `<p>${screens[r]} content</p>`}
         </main>
       </div>`;
   }
   render();
   addEventListener('hashchange', render);
+  if (CHART) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const draw = (t) => {
+      const svg = document.getElementById('chart');
+      if (svg) {
+        svg.replaceChildren();
+        for (let i = 0; i < 5; i++) {
+          const g = document.createElementNS(NS, 'g');
+          const r = document.createElementNS(NS, 'rect');
+          r.setAttribute('x', i * 60 + 5);
+          r.setAttribute('width', 50);
+          const h = 20 + 20 * Math.sin(t / 300 + i);
+          r.setAttribute('y', 60 - h);
+          r.setAttribute('height', h);
+          r.setAttribute('fill', '#6b7cff');
+          g.appendChild(r);
+          svg.appendChild(g);
+        }
+      }
+      requestAnimationFrame(draw);
+    };
+    requestAnimationFrame(draw);
+  }
   setInterval(() => {
     if (REDRAW) return render();
     document.querySelectorAll('.sla').forEach((n, i) => (n.textContent = sla(i)));

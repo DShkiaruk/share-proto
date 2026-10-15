@@ -57,7 +57,51 @@ test('posting on a heavy page does not freeze it, and the picture is still taken
   // The picture used to copy every one of the page's 7 000 nodes — offscreen
   // rows included — in one go: 2.7 s with nothing on the page answering.
   await expect.poll(async () => (await threadByText(page, 'freeze: heavy page'))?.preview || null, { timeout: 10_000 }).not.toBeNull();
-  expect(await longest(page)).toBeLessThan(1000);
+  // Copying only the view took it to 0.3 s; copying it in turns, with the
+  // page answering in between, to well under 0.1 s.
+  expect(await longest(page)).toBeLessThan(250);
+});
+
+// The library's sandbox frame, one per copy: two mean the page changed under
+// the first copy in a way that would leave holes, and it was redone in one go.
+async function countCopies(page) {
+  await page.evaluate(() => {
+    window.__copies = 0;
+    new MutationObserver((rs) =>
+      rs.forEach((r) => r.addedNodes.forEach((n) => {
+        if (n.tagName === 'IFRAME' && n.id.startsWith('__SANDBOX__')) window.__copies++;
+      }))
+    ).observe(document.body, { childList: true });
+  });
+  return () => page.evaluate(() => window.__copies);
+}
+
+test('a chart that redraws every frame is still copied in turns', async ({ page }) => {
+  await login(page, 'Client', CLIENT);
+  await page.goto('/?chart=1');
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await page.waitForTimeout(500);
+  const copies = await countCopies(page);
+  await startLongTasks(page);
+  await postAt(page, 700, 420, 'freeze: live chart');
+  await expect.poll(async () => (await threadByText(page, 'freeze: live chart'))?.preview || null, { timeout: 10_000 }).not.toBeNull();
+  // A real prototype takes SVG groups out every 16 ms. Treating any removal
+  // as damage sent every capture there back to one long copy.
+  expect(await copies()).toBe(1);
+  expect(await longest(page)).toBeLessThan(250);
+});
+
+test('a list rebuilt while the picture is taken still gets a whole picture', async ({ page }) => {
+  await login(page, 'Client', CLIENT);
+  await page.goto('/?redraw=1&tick=40');
+  await page.waitForFunction(() => Boolean(window.__fp?.state.role));
+  await page.waitForTimeout(500);
+  const copies = await countCopies(page);
+  await postAt(page, 700, 420, 'freeze: rebuilt list');
+  await expect.poll(async () => (await threadByText(page, 'freeze: rebuilt list'))?.preview || null, { timeout: 10_000 }).not.toBeNull();
+  // Rows taken out mid-copy end the library's walk early: the first copy is
+  // dropped and the picture is taken again in one go.
+  expect(await copies()).toBe(2);
 });
 
 test('a page of lazy pictures still gets its comment picture, and quickly', async ({ page }) => {
