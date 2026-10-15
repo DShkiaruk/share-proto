@@ -3,11 +3,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
-import { newSince, deepLink, render, clip, add, check, list, registryPath, writeRegistry } from '../../scripts/watch.mjs';
+import {
+  newSince, deepLink, render, clip, add, check, list, registryPath, writeRegistry,
+  installHook, uninstallHook, hookCommand,
+} from '../../scripts/watch.mjs';
 
 const T = (o) => ({
   id: o.id || 't1',
@@ -319,6 +322,87 @@ test('a wrong password is refused at add time', withConfig(async () => {
   try {
     await assert.rejects(add({ page: s.base + '/', password: 'nope', name: 'Dima' }), /password/i);
     assert.equal(list().length, 0);
+  } finally {
+    s.stop();
+  }
+}));
+
+/* ---------- the startup hook in the designer's settings ---------- */
+
+const settingsIn = (dir) => join(dir, 'settings.json');
+const CMD = 'node "/x/watch.mjs" check';
+
+test('install adds one startup group and keeps everything else', withConfig(async (cfg) => {
+  const file = settingsIn(cfg);
+  writeFileSync(file, JSON.stringify({ model: 'opus', hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo other' }] }], Stop: [] } }, null, 2));
+  assert.equal(installHook(file, CMD), 'added');
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(s.model, 'opus');
+  assert.deepEqual(s.hooks.Stop, []);
+  assert.equal(s.hooks.SessionStart.length, 2);
+  assert.deepEqual(s.hooks.SessionStart[1], { matcher: 'startup', hooks: [{ type: 'command', command: CMD, timeout: 5 }] });
+  assert.ok(existsSync(file + '.share-proto.bak'), 'a backup of the original is kept');
+  assert.equal(installHook(file, CMD), 'present');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).hooks.SessionStart.length, 2, 'never twice');
+}));
+
+test('install creates settings.json when there is none', withConfig(async (cfg) => {
+  const file = settingsIn(cfg);
+  assert.equal(installHook(file, CMD), 'added');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).hooks.SessionStart.length, 1);
+}));
+
+test('a settings file that is not valid JSON is left exactly as it was', withConfig(async (cfg) => {
+  const file = settingsIn(cfg);
+  writeFileSync(file, '{ "model": "opus", }');
+  assert.equal(installHook(file, CMD), 'refused');
+  assert.equal(readFileSync(file, 'utf8'), '{ "model": "opus", }');
+}));
+
+test('uninstall removes only this hook', withConfig(async (cfg) => {
+  const file = settingsIn(cfg);
+  writeFileSync(file, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo other' }] }] } }));
+  installHook(file, CMD);
+  assert.equal(uninstallHook(file), true);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).hooks.SessionStart, [{ hooks: [{ type: 'command', command: 'echo other' }] }]);
+  assert.equal(uninstallHook(file), false);
+}));
+
+test('the hook command survives a path with spaces', () => {
+  assert.equal(
+    hookCommand('/Users/Anna Maria/.claude/skills/share-proto/scripts/watch.mjs'),
+    'node "/Users/Anna Maria/.claude/skills/share-proto/scripts/watch.mjs" check'
+  );
+  assert.equal(hookCommand('C:\\Users\\Anna Maria\\watch.mjs'), 'node "C:\\Users\\Anna Maria\\watch.mjs" check');
+});
+
+const cli = (cfg, ...args) =>
+  execFileSync('node', [join(root, 'scripts/watch.mjs'), ...args], {
+    env: { ...process.env, CLAUDE_CONFIG_DIR: cfg, SHARE_PROTO_WATCH_ALLOW_LOCAL: '1' },
+    encoding: 'utf8',
+  });
+
+test('the command line: check is silent with nothing to say, and never fails', withConfig(async (cfg) => {
+  assert.equal(cli(cfg, 'check'), '');
+  mkdirSync(join(cfg, 'share-proto'), { recursive: true });
+  writeFileSync(join(cfg, 'share-proto', 'watch.json'), 'garbage');
+  assert.equal(cli(cfg, 'check'), '');
+}));
+
+test('the command line: add installs the hook, and the hook prints hook JSON', withConfig(async (cfg) => {
+  const s = await startServer();
+  try {
+    assert.match(cli(cfg, 'add', s.base + '/', '--password', 'team-w', '--name', 'Dima', '--title', 'CLI fixture'), /Watching “CLI fixture”/);
+    const hooks = JSON.parse(readFileSync(join(cfg, 'settings.json'), 'utf8')).hooks.SessionStart;
+    assert.match(hooks[0].hooks[0].command, /watch\.mjs" check$/);
+    await comment(s.base, await signIn(s.base, 'client-w', 'Osama'), 'from the CLI test');
+    // The first check after add is due at once: add does not count as one.
+    const out = JSON.parse(cli(cfg, 'check'));
+    assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
+    assert.match(out.hookSpecificOutput.additionalContext, /from the CLI test/);
+    assert.match(cli(cfg, 'list'), /CLI fixture/);
+    assert.match(cli(cfg, 'remove', s.base + '/'), /Removed/);
+    assert.equal(cli(cfg, 'list'), '');
   } finally {
     s.stop();
   }

@@ -9,9 +9,10 @@
    needs every designer to build one by hand; and the designer's own Claude
    posting to Slack posts *as them*, which Slack does not notify them about. */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, chmodSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const LINES = 5;
 const MAX_TEXT = 140;
@@ -297,4 +298,129 @@ export async function check({ now = Date.now(), fetchImpl = fetch } = {}) {
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: out.context },
     ...(SHOW_HEADLINE ? { systemMessage: out.headline } : {}),
   };
+}
+
+/* ---------- the startup hook in the designer's ~/.claude/settings.json ---------- */
+
+export const SELF = fileURLToPath(import.meta.url);
+export const settingsPath = () => join(configDir(), 'settings.json');
+// Quoted: a home folder with a space in it ("Anna Maria") is ordinary.
+export const hookCommand = (script = SELF) => `node "${script}" check`;
+const ours = (h) => typeof h?.command === 'string' && /watch\.mjs"?\s+check\b/.test(h.command);
+
+function readSettings(file) {
+  if (!existsSync(file)) return {};
+  const raw = readFileSync(file, 'utf8');
+  if (!raw.trim()) return {};
+  const s = JSON.parse(raw); // throws on invalid JSON: callers refuse
+  if (!s || typeof s !== 'object' || Array.isArray(s)) throw new Error('not an object');
+  return s;
+}
+
+function writeSettings(file, s) {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n');
+  renameSync(tmp, file);
+}
+
+// Merge, never overwrite: someone else's settings are in that file.
+export function installHook(file = settingsPath(), command = hookCommand()) {
+  let s;
+  try {
+    s = readSettings(file);
+  } catch {
+    return 'refused';
+  }
+  const groups = Array.isArray(s.hooks?.SessionStart) ? s.hooks.SessionStart : [];
+  if (groups.some((g) => (g.hooks || []).some(ours))) return 'present';
+  if (existsSync(file) && !existsSync(`${file}.share-proto.bak`)) copyFileSync(file, `${file}.share-proto.bak`);
+  // "startup" only: not on resume, clear, compact or fork — the same session
+  // picked up again must not repeat the news.
+  s.hooks = { ...(s.hooks || {}), SessionStart: [...groups, { matcher: 'startup', hooks: [{ type: 'command', command, timeout: 5 }] }] };
+  writeSettings(file, s);
+  return 'added';
+}
+
+export function uninstallHook(file = settingsPath()) {
+  let s;
+  try {
+    s = readSettings(file);
+  } catch {
+    return false;
+  }
+  const groups = Array.isArray(s.hooks?.SessionStart) ? s.hooks.SessionStart : [];
+  if (!groups.some((g) => (g.hooks || []).some(ours))) return false;
+  s.hooks.SessionStart = groups
+    .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !ours(h)) }))
+    .filter((g) => g.hooks.length);
+  writeSettings(file, s);
+  return true;
+}
+
+/* ---------- command line ---------- */
+
+const USAGE = `usage:
+  watch.mjs add <page url> --password <team password> --name <designer's name> [--title <title>] [--api <comments host> --room <room>]
+  watch.mjs check      (the startup hook; prints hook JSON or nothing)
+  watch.mjs list
+  watch.mjs remove <page url>
+  watch.mjs uninstall  (removes the startup hook; the list stays)`;
+
+function flags(argv) {
+  const out = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[++i];
+    else out._.push(argv[i]);
+  }
+  return out;
+}
+
+async function main(argv) {
+  const [cmd, ...rest] = argv;
+  const f = flags(rest);
+  if (cmd === 'check') {
+    // A session must start whatever happens in here.
+    try {
+      const out = await check();
+      if (out) process.stdout.write(JSON.stringify(out));
+    } catch {
+      /* silent by design */
+    }
+    return 0;
+  }
+  if (cmd === 'add') {
+    const e = await add({ page: f._[0], password: f.password, name: f.name, api: f.api, room: f.room, title: f.title });
+    const hook = installHook();
+    console.log(`Watching “${e.title}” (${e.page}${e.room ? `, room ${e.room}` : ''}) for ${e.me}. Startup hook: ${hook}.`);
+    if (hook === 'refused') console.log(`${settingsPath()} is not valid JSON — it was left alone. The hook to add: ${hookCommand()}`);
+    return 0;
+  }
+  if (cmd === 'list') {
+    for (const p of list()) {
+      const last = p.lastCheck ? new Date(p.lastCheck).toISOString() : 'never';
+      console.log(`${p.title}\t${p.page}${p.room ? ` (room ${p.room})` : ''}\tlast check: ${last}${p.lastError ? `\terror: ${p.lastError}` : ''}`);
+    }
+    return 0;
+  }
+  if (cmd === 'remove') {
+    console.log(f._[0] && remove(f._[0]) ? 'Removed.' : 'Not watched.');
+    return 0;
+  }
+  if (cmd === 'uninstall') {
+    console.log(uninstallHook() ? 'Startup hook removed.' : 'There was no startup hook.');
+    return 0;
+  }
+  console.error(USAGE);
+  return 2;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === SELF) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (e) => {
+      console.error(e?.message || String(e));
+      process.exit(1);
+    }
+  );
 }
