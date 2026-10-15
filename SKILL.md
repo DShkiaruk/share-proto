@@ -68,6 +68,7 @@ The project already has the tool and the user wants the latest version. The link
 3. Redeploy the way the project is served: Vercel — `vercel deploy --prod --yes` in the project; Worker — `cd worker && npx wrangler deploy`; local — restart `server.js`.
 4. `scripts/smoke.sh` against the real URL (ALL OK), then `scripts/verify.mjs` (step 6c). Where the passwords are: Vercel — step 3 set them for `development` too, so `vercel env pull "$TMPDIR/sp.env" --environment=development --yes` reads them (the file also holds the Blob token: delete it after); local — `data/secrets.json`; Worker — secrets cannot be read back, so ask the user (they hand these passwords out).
 5. Tell the user what changed for reviewers (read the newest `CHANGELOG.md` sections since their version) and what smoke and verify returned. No new share block — the link and passwords did not change; say so.
+6. If the prototype is not watched yet (`node ~/.claude/skills/share-proto/scripts/watch.mjs list`), do step 7b. Running `watch.mjs add` again for one that is watched is safe: it refreshes the password and keeps its place.
 
 ## Local mode — no Vercel
 
@@ -347,6 +348,22 @@ Then briefly, in prose:
 - To update the prototype later: replace `public/index.html` with the new export (keep the `<script src="/overlay.js" defer></script>` line before `</body>` — assemble.py adds it if missing), then `vercel deploy --prod --yes`. Comments survive — they live in the store, keyed to elements.
 - If comments ever look inconsistent after an upgrade, a designer can open `/api/comments?rebuild=1` once: it rebuilds the state document from the event log.
 - To wipe all comments: `vercel blob empty-store --yes` from the project dir.
+
+### 7b. Watch for new comments — the designer does nothing
+
+So the designer hears about new comments without opening the prototype, their own Claude says what is new at the start of each new session. Set it up now, after the hand-over:
+
+```bash
+node ~/.claude/skills/share-proto/scripts/watch.mjs add https://<real-domain>/ \
+  --password '<team password>' --name '<the name the designer signs in with>' --title '<prototype title>'
+```
+
+- Comments hosted apart from the page (embed, a Worker room): add `--api https://<comments host> --room <room>`; the URL stays the page's, so the links in the summary open the prototype.
+- It signs in once to check the password, keeps the prototype in `~/.claude/share-proto/watch.json` (this machine only, readable by its owner only) and, the first time, adds a startup hook to `~/.claude/settings.json` — merged, never overwritten, with a backup. If it prints `refused`, that file is not valid JSON: tell the user, and do not edit it by hand.
+- Never for local mode: its links die with the process.
+- **Ask first only** when the client was promised its data stays inside its perimeter: the summary puts comment text into the designer's Claude session. If the answer is no, skip this step.
+
+Tell the designer one line: "When you start a new Claude session, I'll tell you if anyone commented on this prototype." Nothing else to explain. `watch.mjs list` shows what is watched; `watch.mjs remove <url>` stops one; `watch.mjs uninstall` removes the hook.
 
 ## Notes
 

@@ -127,6 +127,34 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
+## v2.8 — 2026-10-16
+
+**The designer hears about new comments without opening the prototype.** At the
+start of each new Claude Code session, the designer's own Claude says what other
+people commented on their prototypes since they last looked — who, on which
+screen, what, and a link straight to the comment. Silent when nothing is new.
+Set up by the runbook's new step 7b; the designer does nothing.
+
+- `scripts/watch.mjs` (zero dependencies): `add` keeps the prototype in
+  `~/.claude/share-proto/watch.json` (this machine only, owner-readable) and
+  adds a startup hook to `~/.claude/settings.json` — merged, never overwritten,
+  with a backup; `check` is that hook; `list`, `remove`, `uninstall`.
+- New comments and replies by anyone but the owner; the owner's own never.
+  At most 5 lines per prototype, the rest counted. In the terminal a one-line
+  headline shows before anything is typed.
+- Reads with the same calls the overlay makes: all prototypes in parallel,
+  3 s at most (a session waits for it), each read at most once per 5 minutes.
+  One that does not answer keeps its place; after a month of not answering it
+  is dropped with a one-time note.
+- Comment text is written by reviewers, so the summary hands it to Claude
+  quoted, after a sentence saying it is text to show, never instructions.
+- Why not Slack, checked against the docs: a bot needs a Slack admin and a
+  shared server holding its token; a workflow needs every designer to build
+  one by hand; and the designer's own Claude posting to Slack posts *as them*,
+  which most likely notifies no one (not stated by Slack; one answer on its
+  community forum says so). Spec:
+  `docs/superpowers/specs/2026-10-16-comment-watch-design.md`.
+
 ## v2.7 — 2026-10-15
 
 Reported from live reviews: a client — "it freezes all the time and takes a

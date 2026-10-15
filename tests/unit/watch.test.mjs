@@ -407,3 +407,17 @@ test('the command line: add installs the hook, and the hook prints hook JSON', w
     s.stop();
   }
 }));
+
+test('adding a watched prototype again keeps what has not been told yet', withConfig(async () => {
+  const s = await startServer();
+  try {
+    await add({ page: s.base + '/', password: 'team-w', name: 'Dima', title: 'Again' });
+    await comment(s.base, await signIn(s.base, 'client-w', 'Osama'), 'not told yet');
+    // The runbook re-runs add on every update of an install.
+    await add({ page: s.base + '/', password: 'team-w', name: 'Dima', title: 'Again' });
+    assert.equal(list().length, 1);
+    assert.match(ctxOf(await check({ now: Date.now() + SIX_MIN })), /not told yet/);
+  } finally {
+    s.stop();
+  }
+}));

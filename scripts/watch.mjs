@@ -7,7 +7,8 @@
 
    Why not Slack: a bot needs a Slack admin and a shared server; a workflow
    needs every designer to build one by hand; and the designer's own Claude
-   posting to Slack posts *as them*, which Slack does not notify them about. */
+   posting to Slack posts *as them*, which most likely notifies no one (not
+   stated by Slack; one answer on its community forum says so). */
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, chmodSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -214,10 +215,13 @@ export async function add({ page, password, name, api, room = '', title }, { fet
   };
   if (!entry.me) throw new Error('missing --name (the name the designer signs in with)');
   const threads = await fetchThreads(entry, Date.now(), fetchImpl);
-  // The server's clock, not this machine's: what is there already is not
-  // news, and a laptop clock running fast must not hide what comes next.
-  entry.lastSeen = newest(threads);
   const reg = readRegistry();
+  const known = reg.prototypes.find((p) => key(p) === key(entry));
+  // Watched already (the runbook re-runs add on every update): keep its place,
+  // or what has not been told yet would be skipped. New: start from the
+  // server's clock, not this machine's — what is there is not news, and a
+  // laptop clock running fast must not hide what comes next.
+  entry.lastSeen = known ? known.lastSeen : newest(threads);
   reg.prototypes = [...reg.prototypes.filter((p) => key(p) !== key(entry)), entry];
   writeRegistry(reg);
   return entry;
