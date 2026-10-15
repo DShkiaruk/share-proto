@@ -144,6 +144,12 @@ owner chose to switch it off rather than narrow it.
 - `scripts/watch.mjs` is now only that clean-up (`uninstall` runs it by hand;
   the old `add` sets nothing up and says so). Step 7b is out of the runbook.
   The feature is in git history (v2.8) and the spec says why it stopped.
+- Measured, v2.6 against v2.7+, by the same steps on the same machine:
+  `docs/superpowers/bench/2026-10-15-speed/` (scripts, raw results, tables).
+  After a comment on a 600-row page the freeze went from 2.5 s to 0.3 s
+  (10.9 s to 1.3 s on a 4× slower CPU); a screenshot-heavy report gets its
+  picture at all; your own comment no longer waits on a slow read. Still
+  open: that 1.3 s on the slow CPU.
 
 ## v2.8 — 2026-10-15
 
