@@ -127,7 +127,25 @@ three inbox lists (Linear, Intercom, Upwork) before touching anything.
 - New: `theme` on a comment (all three servers, one shared sanitiser), covered by
   `npm test`, both smoke scripts and `tests/e2e/theme.spec.mjs`.
 
-## v2.8 — 2026-10-16
+## v2.8.1 — 2026-10-15
+
+**The comment news at the start of a Claude session is switched off.** In use
+it broke into chats that had nothing to do with prototypes: a session about a
+slide deck began with three comments from a test prototype — the designer's
+own, left from a phone under a shorter name, so not recognised as theirs. The
+owner chose to switch it off rather than narrow it.
+
+- The hook v2.8 installed takes itself out at the next session start: it
+  removes itself from `~/.claude/settings.json` (other hooks, the file's mode
+  and a symlink are kept; a file that is not valid JSON is left alone) and
+  deletes `~/.claude/share-proto/watch.json` with every copy of it, since it
+  holds team passwords nothing reads any more. It prints nothing; no designer
+  has anything to do.
+- `scripts/watch.mjs` is now only that clean-up (`uninstall` runs it by hand;
+  the old `add` sets nothing up and says so). Step 7b is out of the runbook.
+  The feature is in git history (v2.8) and the spec says why it stopped.
+
+## v2.8 — 2026-10-15
 
 **The designer hears about new comments without opening the prototype.** At the
 start of each new Claude Code session, the designer's own Claude says what other

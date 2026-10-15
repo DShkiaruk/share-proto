@@ -3,6 +3,14 @@
 Status: design, approved in conversation 2026-10-16 (Dmytro); this document
 is for review before an implementation plan.
 
+**Switched off 2026-10-15 (v2.8.1), by the owner.** Shipped in v2.8 and in use
+for a day: news at every new session start broke into unrelated chats (a slide
+deck session opened with prototype comments), and the "owner" test by exact
+name missed the owner's own comments left from a phone as "Dima" while the
+watch knew them as "Dmytro". Narrowing it (one line, details on request; only
+in the prototype's folder) was offered; the owner chose off. `scripts/watch.mjs`
+now only removes the hook and the stored passwords.
+
 ## Why
 
 Designers learn about new comments only by opening the prototype. Comments
